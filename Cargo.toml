@@ -1,14 +1,14 @@
 [package]
 name = "pi_spatialtree"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["yineng <dev@dev.com>"]
 edition = "2018"
 
 [dependencies]
-ncollide2d = "0.27.0"
-ncollide3d = "0.27.0"
-nalgebra = "0.24.0"
-num-traits = "0.2.14"
+ncollide2d = "0.33"
+ncollide3d = "0.33"
+nalgebra = "0.30"
+num-traits = "0.2"
 pi_slotmap="0.1"
 pi_map = "0.1"
 pi_null = "0.1"
