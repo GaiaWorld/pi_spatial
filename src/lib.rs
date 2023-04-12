@@ -5,6 +5,7 @@
 pub mod oct_helper;
 pub mod quad_helper;
 pub mod tree;
+pub mod tilemap;
 
 pub use tree::*;
 pub use oct_helper::*;

@@ -3,7 +3,7 @@
 //! 采用Slab，内部用偏移量来分配八叉节点。这样内存连续，八叉树本身可以快速拷贝。
 //! 要求插入AABB节点时的id， 应该是可以用在数组索引上的。
 
-use pi_slotmap::{SlotMap, SecondaryMap, Key};
+use pi_slotmap::{Key, SecondaryMap, SlotMap};
 
 pub trait Helper<const N: usize> {
     type Point;
@@ -62,13 +62,13 @@ const ADJUST_MAX: usize = 7;
 ///
 pub struct Tree<K: Key, H: Helper<N>, T, const N: usize> {
     pub slab: SlotMap<K, BranchNode<K, H, N>>, //所有分支节点（分支节点中包含该层ab节点列表）
-    pub ab_map: SecondaryMap<K, AbNode<K, H::Aabb, T>>,     //所有存储ab碰撞单位的节点
-    max_loose: H::Vector,                //最大松散值，第一层的松散大小
-    min_loose: H::Vector,                //最小松散值
-    adjust: (usize, usize),              //小于min，节点收缩; 大于max，节点分化。默认(4, 7)
-    loose_layer: usize,                  // 最小松散值所在的深度
-    deep: usize,                         // 最大深度, 推荐12-16
-	root_key: K,
+    pub ab_map: SecondaryMap<K, AbNode<K, H::Aabb, T>>, //所有存储ab碰撞单位的节点
+    max_loose: H::Vector,                      //最大松散值，第一层的松散大小
+    min_loose: H::Vector,                      //最小松散值
+    adjust: (usize, usize),                    //小于min，节点收缩; 大于max，节点分化。默认(4, 7)
+    loose_layer: usize,                        // 最小松散值所在的深度
+    deep: usize,                               // 最大深度, 推荐12-16
+    root_key: K,
     pub outer: NodeList<K>, // 和根节点不相交的ab节点列表，及节点数量。 相交的放在root的nodes上了。 该AbNode的parent为0
     pub dirty: (Vec<Vec<K>>, usize, usize), // 脏的BranchNode节点, 及脏节点数量，及脏节点的起始层
 }
@@ -118,7 +118,7 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
             adjust: (adjust_min, adjust_max),
             loose_layer,
             deep,
-			root_key: root,
+            root_key: root,
             outer: NodeList::new(),
             dirty: (Vec::new(), 0, usize::max_value()),
         };
@@ -148,10 +148,10 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
     }
 
     /// 指定id，在叉树中添加一个aabb单元及其绑定
-    pub fn add(&mut self, id: K, aabb: H::Aabb, bind: T) {
+    pub fn add(&mut self, id: K, aabb: H::Aabb, bind: T) -> bool {
         let layer = self.get_layer(&aabb);
         match self.ab_map.insert(id, AbNode::new(aabb, bind, layer, N)) {
-            Some(_) => return,// panic!("duplicate id: {}", id),
+            Some(_) => return false,
             _ => (),
         }
         let next = {
@@ -161,7 +161,14 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
                 // root的ab内
                 set_tree_dirty(
                     &mut self.dirty,
-                    down(&mut self.slab, self.adjust.1, self.deep, self.root_key, node, id),
+                    down(
+                        &mut self.slab,
+                        self.adjust.1,
+                        self.deep,
+                        self.root_key,
+                        node,
+                        id,
+                    ),
                 );
             } else if H::aabb_intersects(&root.aabb, &node.value.0) {
                 // 相交的放在root的nodes上
@@ -180,6 +187,7 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
             let n = unsafe { self.ab_map.get_unchecked_mut(next) };
             n.prev = id;
         }
+        true
     }
 
     /// 获取指定id的aabb及其绑定
@@ -191,29 +199,29 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
         }
     }
 
-	/// 获取指定id的aabb及其绑定
-	pub unsafe fn get_unchecked(&self, id: K) -> &(H::Aabb, T) {
-		&self.ab_map.get_unchecked (id).value
+    /// 获取指定id的aabb及其绑定
+    pub unsafe fn get_unchecked(&self, id: K) -> &(H::Aabb, T) {
+        &self.ab_map.get_unchecked(id).value
     }
 
-	/// 获取指定id的可写绑定
-    pub unsafe fn get_mut(&mut self, id: K) -> Option<&mut (H::Aabb, T)> {
+    /// 获取指定id的可写绑定
+    pub unsafe fn get_mut(&mut self, id: K) -> Option<&mut T> {
         match self.ab_map.get_mut(id) {
-            Some(n) => Some(&mut n.value),
+            Some(n) => Some(&mut n.value.1),
             _ => None,
         }
     }
 
     /// 获取指定id的可写绑定
-    pub unsafe fn get_unchecked_mut(&mut self, id: K) -> &mut (H::Aabb, T) {
+    pub unsafe fn get_unchecked_mut(&mut self, id: K) -> &mut T {
         let node = self.ab_map.get_unchecked_mut(id);
-        &mut node.value
+        &mut node.value.1
     }
 
-	/// 检查是否包含某个key
-	pub fn contains_key(&self, id: K) -> bool {
-		self.ab_map.contains_key(id)
-	}
+    /// 检查是否包含某个key
+    pub fn contains_key(&self, id: K) -> bool {
+        self.ab_map.contains_key(id)
+    }
 
     /// 更新指定id的aabb
     pub fn update(&mut self, id: K, aabb: H::Aabb) -> bool {
@@ -230,7 +238,7 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
                     &mut self.dirty,
                     id,
                     node,
-					self.root_key,
+                    self.root_key,
                 )
             }
             _ => return false,
@@ -252,7 +260,7 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
                     &mut self.dirty,
                     id,
                     node,
-					self.root_key,
+                    self.root_key,
                 )
             }
             _ => return false,
@@ -371,9 +379,9 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
         }
     }
 
-	pub fn len(&self) -> usize {
-		self.ab_map.len()
-	}
+    pub fn len(&self) -> usize {
+        self.ab_map.len()
+    }
 
     // 检查碰撞对，不会检查outer的aabb。一般arg包含1个hashset，用(big, little)做键，判断是否已经计算过。
     // pub fn collision<A>(
@@ -429,7 +437,10 @@ pub struct NodeList<K> {
 impl<K: Key> NodeList<K> {
     #[inline]
     pub fn new() -> NodeList<K> {
-        NodeList { head: K::null(), len: 0 }
+        NodeList {
+            head: K::null(),
+            len: 0,
+        }
     }
     #[inline]
     pub fn len(&self) -> usize {
@@ -463,12 +474,12 @@ impl<K: Key> NodeList<K> {
 
 #[derive(Debug, Clone)]
 pub struct BranchNode<K: Key, H: Helper<N>, const N: usize> {
-    aabb: H::Aabb,          // 包围盒
-    loose: H::Vector,       // 本层的松散值
-    parent: K,          // 父八叉节点
-    parent_child: usize,    // 对应父八叉节点childs的位置
+    aabb: H::Aabb,             // 包围盒
+    loose: H::Vector,          // 本层的松散值
+    parent: K,                 // 父八叉节点
+    parent_child: usize,       // 对应父八叉节点childs的位置
     childs: [ChildNode<K>; N], // 子八叉节点
-    layer: usize,           // 表示第几层， 根据aabb大小，决定最低为第几层
+    layer: usize,              // 表示第几层， 根据aabb大小，决定最低为第几层
     nodes: NodeList<K>,        // 匹配本层大小的ab节点列表，及节点数量
     dirty: usize, // 脏标记, 1-128对应节点被修改。添加了节点，并且某个子八叉节点(AbNode)的数量超过阈值，可能分化。删除了节点，并且自己及其下ab节点的数量超过阈值，可能收缩
 }
@@ -490,17 +501,17 @@ impl<K: Key, H: Helper<N>, const N: usize> BranchNode<K, H, N> {
 #[derive(Debug, Clone, Copy)]
 enum ChildNode<K> {
     Branch(K, usize), // 对应的BranchNode, 及其下ab节点的数量
-    Ab(NodeList<K>),         // ab节点列表，及节点数量
+    Ab(NodeList<K>),  // ab节点列表，及节点数量
 }
 
 #[derive(Debug, Clone)]
 pub struct AbNode<K: Key, Aabb, T> {
-    value: (Aabb, T),       // 包围盒
+    value: (Aabb, T),    // 包围盒
     layer: usize,        // 表示第几层， 根据aabb大小，决定最低为第几层
-    parent: K,       // 父八叉节点
+    parent: K,           // 父八叉节点
     parent_child: usize, // 父八叉节点所在的子八叉节点， 8表示不在子八叉节点上
-    prev: K,         // 前ab节点
-    next: K,         // 后ab节点
+    prev: K,             // 前ab节点
+    next: K,             // 后ab节点
 }
 impl<K: Key, Aabb, T> AbNode<K, Aabb, T> {
     pub fn new(aabb: Aabb, bind: T, layer: usize, n: usize) -> Self {
@@ -562,7 +573,7 @@ fn update<K: Key, H: Helper<N>, T, const N: usize>(
     dirty: &mut (Vec<Vec<K>>, usize, usize),
     id: K,
     node: &mut AbNode<K, H::Aabb, T>,
-	root_key: K,
+    root_key: K,
 ) -> Option<(K, usize, K, K, K)> {
     let old_p = node.parent;
     if !old_p.is_null() {
