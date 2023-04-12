@@ -1,9 +1,9 @@
 [package]
 name = "pi_spatialtree"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["yineng <dev@dev.com>"]
 edition = "2021"
-description = "A* Path Finding Algorithm"
+description = "sparial octtree quadtree"
 repository = "https://github.com/GaiaWorld/pi_sparialtree"
 license = "MIT OR Apache-2.0"
 keywords = ["pi", "Sparial", "Tree"]
@@ -14,7 +14,6 @@ ncollide3d = "0.33"
 nalgebra = "0.30"
 num-traits = "0.2"
 pi_slotmap="0.1"
-pi_map = "0.1"
 pi_null = "0.1"
 
 [dev-dependencies]
