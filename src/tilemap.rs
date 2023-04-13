@@ -11,6 +11,112 @@ use num_traits::*;
 use pi_null::*;
 use pi_slotmap::*;
 
+// 八方向枚举
+#[repr(C)]
+pub enum Direction {
+    Left = 0,
+    Right = 1,
+    Up = 2,
+    Down = 3,
+    UpLeft = 4,
+    UpRight = 5,
+    DownLeft = 6,
+    DownRight = 7,
+}
+/// 获得指定位置瓦片的上下左右四个瓦片， 如果为数组元素为null，则超出边界
+pub fn get_4d_neighbors(tile_index: usize, column: usize, count: usize) -> [usize; 4] {
+    let mut arr = Default::default();
+    if tile_index >= count + column {
+        return arr;
+    }
+    let c = tile_index % column;
+    if c == column - 1 {
+        arr[Direction::Left as usize] = tile_index - 1;
+    } else if c > 0 {
+        arr[Direction::Left as usize] = tile_index - 1;
+        arr[Direction::Right as usize] = tile_index + 1;
+    } else {
+        arr[Direction::Right as usize] = tile_index + 1;
+    }
+    if tile_index + column >= count {
+        arr[Direction::Up as usize] = tile_index - column;
+    } else if tile_index >= column {
+        arr[Direction::Up as usize] = tile_index - column;
+        arr[Direction::Down as usize] = tile_index + column;
+    } else {
+        arr[Direction::Down as usize] = tile_index + column;
+    }
+    arr
+}
+/// 获得指定位置瓦片周围的八个瓦片， 如果为数组元素为null，则超出边界
+pub fn get_8d_neighbors(tile_index: usize, column: usize, count: usize) -> [usize; 8] {
+    let mut arr = Default::default();
+    if tile_index >= count + column {
+        return arr;
+    }
+    let c = tile_index % column;
+    if tile_index >= count {
+        arr[Direction::Up as usize] = tile_index - column;
+        if c == column - 1 {
+            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
+        } else if c > 0 {
+            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
+            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
+        } else {
+            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
+        }
+        return arr;
+    }
+    if c == column - 1 {
+        arr[Direction::Left as usize] = tile_index - 1;
+        if tile_index + column >= count {
+            arr[Direction::Up as usize] = tile_index - column;
+            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
+        } else if tile_index >= column {
+            arr[Direction::Up as usize] = tile_index - column;
+            arr[Direction::Down as usize] = tile_index + column;
+            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
+            arr[Direction::DownLeft as usize] = arr[Direction::Down as usize] - 1;
+        } else {
+            arr[Direction::Down as usize] = tile_index + column;
+            arr[Direction::DownLeft as usize] = arr[Direction::Down as usize] - 1;
+        }
+    } else if c > 0 {
+        arr[Direction::Left as usize] = tile_index - 1;
+        arr[Direction::Right as usize] = tile_index + 1;
+        if tile_index + column >= count {
+            arr[Direction::Up as usize] = tile_index - column;
+            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
+            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
+        } else if tile_index >= column {
+            arr[Direction::Up as usize] = tile_index - column;
+            arr[Direction::Down as usize] = tile_index + column;
+            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
+            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
+            arr[Direction::DownLeft as usize] = arr[Direction::Down as usize] - 1;
+            arr[Direction::DownRight as usize] = arr[Direction::Down as usize] + 1;
+        } else {
+            arr[Direction::Down as usize] = tile_index + column;
+            arr[Direction::DownLeft as usize] = arr[Direction::Down as usize] - 1;
+            arr[Direction::DownRight as usize] = arr[Direction::Down as usize] + 1;
+        }
+    } else {
+        arr[Direction::Right as usize] = tile_index + 1;
+        if tile_index + column >= count {
+            arr[Direction::Up as usize] = tile_index - column;
+            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
+        } else if tile_index >= column {
+            arr[Direction::Up as usize] = tile_index - column;
+            arr[Direction::Down as usize] = tile_index + column;
+            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
+            arr[Direction::DownRight as usize] = arr[Direction::Down as usize] + 1;
+        } else {
+            arr[Direction::Down as usize] = tile_index + column;
+            arr[Direction::DownRight as usize] = arr[Direction::Down as usize] + 1;
+        }
+    }
+    arr
+}
 pub struct MapInfo<N: Scalar + RealField + Float + AsPrimitive<usize>> {
     // 场景的范围
     pub bounds: AABB<N>,
@@ -19,7 +125,7 @@ pub struct MapInfo<N: Scalar + RealField + Float + AsPrimitive<usize>> {
     // 该图最大列数
     pub column: usize,
     // 瓦片总数量
-    count: usize,
+    pub count: usize,
     // 大小
     size: Vector2<N>,
     // 最大行数
@@ -54,100 +160,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>> MapInfo<N> {
     pub fn tile_row_column(&self, tile_index: usize) -> (usize, usize) {
         (tile_index / self.column, tile_index % self.column)
     }
-    /// 获得指定位置瓦片的上下左右四个瓦片， 如果为数组元素为null，则超出边界
-    pub fn get_neighbors_four(&self, tile_index: usize) -> [usize; 4] {
-        let mut arr = Default::default();
-        if tile_index >= self.count + self.column {
-            return arr;
-        }
-        let c = tile_index % self.column;
-        if c == self.column - 1 {
-            arr[0] = tile_index - 1;
-        } else if c > 0 {
-            arr[0] = tile_index - 1;
-            arr[1] = tile_index + 1;
-        } else {
-            arr[1] = tile_index + 1;
-        }
-        if tile_index + self.column >= self.count {
-            arr[2] = tile_index - self.column;
-        } else if tile_index >= self.column {
-            arr[2] = tile_index - self.column;
-            arr[3] = tile_index + self.column;
-        } else {
-            arr[3] = tile_index + self.column;
-        }
-        arr
-    }
-    /// 获得指定位置瓦片周围的八个瓦片， 如果为数组元素为null，则超出边界
-    pub fn get_neighbors_eight(&self, tile_index: usize) -> [usize; 8] {
-        let mut arr = Default::default();
-        if tile_index >= self.count + self.column {
-            return arr;
-        }
-        let c = tile_index % self.column;
-        if tile_index >= self.count {
-            arr[2] = tile_index - self.column;
-            if c == self.column - 1 {
-                arr[4] = arr[2] - 1;
-            } else if c > 0 {
-                arr[4] = arr[2] - 1;
-                arr[5] = arr[2] + 1;
-            } else {
-                arr[5] = arr[2] + 1;
-            }
-            return arr;
-        }
-        if c == self.column - 1 {
-            arr[0] = tile_index - 1;
-            if tile_index + self.column >= self.count {
-                arr[2] = tile_index - self.column;
-                arr[4] = arr[2] - 1;
-            } else if tile_index >= self.column {
-                arr[2] = tile_index - self.column;
-                arr[3] = tile_index + self.column;
-                arr[4] = arr[2] - 1;
-                arr[6] = arr[3] - 1;
-            } else {
-                arr[3] = tile_index + self.column;
-                arr[6] = arr[3] - 1;
-            }
-        } else if c > 0 {
-            arr[0] = tile_index - 1;
-            arr[1] = tile_index + 1;
-            if tile_index + self.column >= self.count {
-                arr[2] = tile_index - self.column;
-                arr[4] = arr[2] - 1;
-                arr[5] = arr[2] + 1;
-            } else if tile_index >= self.column {
-                arr[2] = tile_index - self.column;
-                arr[3] = tile_index + self.column;
-                arr[4] = arr[2] - 1;
-                arr[5] = arr[2] + 1;
-                arr[6] = arr[3] - 1;
-                arr[7] = arr[3] + 1;
-            } else {
-                arr[3] = tile_index + self.column;
-                arr[6] = arr[3] - 1;
-                arr[7] = arr[3] + 1;
-            }
-        } else {
-            arr[1] = tile_index + 1;
-            if tile_index + self.column >= self.count {
-                arr[2] = tile_index - self.column;
-                arr[5] = arr[2] + 1;
-            } else if tile_index >= self.column {
-                arr[2] = tile_index - self.column;
-                arr[3] = tile_index + self.column;
-                arr[5] = arr[2] + 1;
-                arr[7] = arr[3] + 1;
-            } else {
-                arr[3] = tile_index + self.column;
-                arr[7] = arr[3] + 1;
-            }
-        }
-        arr
-    }
+
 }
 
 ///
@@ -600,8 +613,8 @@ fn test1() {
             "id:{}, r_c: {:?} 4: {:?} 8: {:?}",
             i,
             tree.info.tile_row_column(i),
-            tree.info.get_neighbors_four(i),
-            tree.info.get_neighbors_eight(i)
+            get_4d_neighbors(i, tree.info.column, tree.info.count),
+            get_8d_neighbors(i, tree.info.column, tree.info.count)
         );
     }
     //assert_eq!(args.result(), [1, 3, 4]);
