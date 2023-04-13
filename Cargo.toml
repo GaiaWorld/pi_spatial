@@ -11,7 +11,7 @@ keywords = ["pi", "Sparial", "Tree"]
 [dependencies]
 ncollide2d = "0.33"
 ncollide3d = "0.33"
-nalgebra = "0.30"
+nalgebra = "0.32"
 num-traits = "0.2"
 pi_slotmap="0.1"
 pi_null = "0.1"
