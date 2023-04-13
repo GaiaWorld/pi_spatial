@@ -30,67 +30,67 @@ pub struct MapInfo<N: Scalar + RealField + Float + AsPrimitive<usize>> {
 impl<N: Scalar + RealField + Float + AsPrimitive<usize>> MapInfo<N> {
     /// 计算指定位置的瓦片
     pub fn calc_tile_index(&self, loc: Point2<N>) -> (usize, usize) {
-        let r = if loc[0] <= self.bounds.mins[0] {
+        let c = if loc[0] <= self.bounds.mins[0] {
             0
         } else if loc[0] >= self.bounds.maxs[0] {
-            self.row - 1
-        } else {
-            ((loc[0] - self.bounds.mins[0]) * self.row_n / self.size[0]).as_()
-        };
-        let c = if loc[1] <= self.bounds.mins[1] {
-            0
-        } else if loc[1] >= self.bounds.maxs[1] {
             self.column - 1
         } else {
-            ((loc[1] - self.bounds.mins[1]) * self.column_n / self.size[1]).as_()
+            ((loc[0] - self.bounds.mins[0]) * self.column_n / self.size[0]).as_()
+        };
+        let r = if loc[1] <= self.bounds.mins[1] {
+            0
+        } else if loc[1] >= self.bounds.maxs[1] {
+            self.row - 1
+        } else {
+            ((loc[1] - self.bounds.mins[1]) * self.row_n / self.size[1]).as_()
         };
         (r, c)
     }
     /// 获得指定行列瓦片的tile_index
     pub fn tile_index(&self, row: usize, column: usize) -> usize {
-        column * self.row + row
+        row * self.column + column
     }
     /// 获得指定位置瓦片的行列
     pub fn tile_row_column(&self, tile_index: usize) -> (usize, usize) {
-        (tile_index % self.row, tile_index / self.row)
+        (tile_index / self.column, tile_index % self.column)
     }
     /// 获得指定位置瓦片的上下左右四个瓦片， 如果为数组元素为null，则超出边界
     pub fn get_neighbors_four(&self, tile_index: usize) -> [usize; 4] {
         let mut arr = Default::default();
-        if tile_index >= self.count + self.row {
+        if tile_index >= self.count + self.column {
             return arr;
         }
-        let r = tile_index % self.row;
-        if r == self.row - 1 {
+        let c = tile_index % self.column;
+        if c == self.column - 1 {
             arr[0] = tile_index - 1;
-        } else if r > 0 {
+        } else if c > 0 {
             arr[0] = tile_index - 1;
             arr[1] = tile_index + 1;
         } else {
             arr[1] = tile_index + 1;
         }
-        if tile_index + self.row >= self.count {
-            arr[2] = tile_index - self.row;
-        } else if tile_index >= self.row {
-            arr[2] = tile_index - self.row;
-            arr[3] = tile_index + self.row;
+        if tile_index + self.column >= self.count {
+            arr[2] = tile_index - self.column;
+        } else if tile_index >= self.column {
+            arr[2] = tile_index - self.column;
+            arr[3] = tile_index + self.column;
         } else {
-            arr[3] = tile_index + self.row;
+            arr[3] = tile_index + self.column;
         }
         arr
     }
     /// 获得指定位置瓦片周围的八个瓦片， 如果为数组元素为null，则超出边界
     pub fn get_neighbors_eight(&self, tile_index: usize) -> [usize; 8] {
         let mut arr = Default::default();
-        if tile_index >= self.count + self.row {
+        if tile_index >= self.count + self.column {
             return arr;
         }
-        let r = tile_index % self.row;
+        let c = tile_index % self.column;
         if tile_index >= self.count {
-            arr[2] = tile_index - self.row;
-            if r == self.row - 1 {
+            arr[2] = tile_index - self.column;
+            if c == self.column - 1 {
                 arr[4] = arr[2] - 1;
-            } else if r > 0 {
+            } else if c > 0 {
                 arr[4] = arr[2] - 1;
                 arr[5] = arr[2] + 1;
             } else {
@@ -98,51 +98,51 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>> MapInfo<N> {
             }
             return arr;
         }
-        if r == self.row - 1 {
+        if c == self.column - 1 {
             arr[0] = tile_index - 1;
-            if tile_index + self.row >= self.count {
-                arr[2] = tile_index - self.row;
+            if tile_index + self.column >= self.count {
+                arr[2] = tile_index - self.column;
                 arr[4] = arr[2] - 1;
-            } else if tile_index >= self.row {
-                arr[2] = tile_index - self.row;
-                arr[3] = tile_index + self.row;
+            } else if tile_index >= self.column {
+                arr[2] = tile_index - self.column;
+                arr[3] = tile_index + self.column;
                 arr[4] = arr[2] - 1;
                 arr[6] = arr[3] - 1;
             } else {
-                arr[3] = tile_index + self.row;
+                arr[3] = tile_index + self.column;
                 arr[6] = arr[3] - 1;
             }
-        } else if r > 0 {
+        } else if c > 0 {
             arr[0] = tile_index - 1;
             arr[1] = tile_index + 1;
-            if tile_index + self.row >= self.count {
-                arr[2] = tile_index - self.row;
+            if tile_index + self.column >= self.count {
+                arr[2] = tile_index - self.column;
                 arr[4] = arr[2] - 1;
                 arr[5] = arr[2] + 1;
-            } else if tile_index >= self.row {
-                arr[2] = tile_index - self.row;
-                arr[3] = tile_index + self.row;
+            } else if tile_index >= self.column {
+                arr[2] = tile_index - self.column;
+                arr[3] = tile_index + self.column;
                 arr[4] = arr[2] - 1;
                 arr[5] = arr[2] + 1;
                 arr[6] = arr[3] - 1;
                 arr[7] = arr[3] + 1;
             } else {
-                arr[3] = tile_index + self.row;
+                arr[3] = tile_index + self.column;
                 arr[6] = arr[3] - 1;
                 arr[7] = arr[3] + 1;
             }
         } else {
             arr[1] = tile_index + 1;
-            if tile_index + self.row >= self.count {
-                arr[2] = tile_index - self.row;
+            if tile_index + self.column >= self.count {
+                arr[2] = tile_index - self.column;
                 arr[5] = arr[2] + 1;
-            } else if tile_index >= self.row {
-                arr[2] = tile_index - self.row;
-                arr[3] = tile_index + self.row;
+            } else if tile_index >= self.column {
+                arr[2] = tile_index - self.column;
+                arr[3] = tile_index + self.column;
                 arr[5] = arr[2] + 1;
                 arr[7] = arr[3] + 1;
             } else {
-                arr[3] = tile_index + self.row;
+                arr[3] = tile_index + self.column;
                 arr[7] = arr[3] + 1;
             }
         }
@@ -198,7 +198,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
     /// 获得指定位置的瓦片，超出地图边界则返回最近的边界瓦片
     pub fn get_tile_index(&self, loc: Point2<N>) -> usize {
         let (r, c) = self.info.calc_tile_index(loc);
-        c * self.info.row + r
+        self.info.tile_index(r, c)
     }
     /// 获得指定位置瓦片的节点数量和节点迭代器
     pub fn get_tile_iter<'a>(&'a self, tile_index: usize) -> (usize, Iter<'a, N, K, T>) {
@@ -221,12 +221,12 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         (
             (column_end - column_start + 1) * (row_end - row_start + 1),
             QueryIter {
-                row: self.info.row,
-                row_start,
-                row_end,
+                column: self.info.column,
                 column_start,
                 column_end,
-                cur_row: row_start,
+                row_start,
+                row_end,
+                cur_column: column_start,
             },
         )
     }
@@ -290,7 +290,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         };
         // 获得原来所在瓦片
         let (r, c) = self.info.calc_tile_index(node.value.0.center());
-        let tile_index = c * self.info.row + r;
+        let tile_index = self.info.tile_index(r, c);
         if tile_index == new_tile_index {
             node.value.0 = aabb;
             return true;
@@ -320,8 +320,8 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
             node.value.0 = aabb;
             return true;
         }
-        let new_tile_index = new_c * self.info.row + new_r;
-        let tile_index = c * self.info.row + r;
+        let new_tile_index = self.info.tile_index(new_r, new_c);
+        let tile_index = self.info.tile_index(r, c);
         node.value.0 = aabb;
         let prev = node.prev;
         let next = node.next;
@@ -359,7 +359,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         };
         // 获得新的所在瓦片
         let (r, c) = self.info.calc_tile_index(node.value.0.center());
-        c * self.info.row + r
+        self.info.tile_index(r, c)
     }
     /// 获得节点数量
     pub fn len(&self) -> usize {
@@ -446,27 +446,27 @@ impl<'a, N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> Iterator
 }
 #[derive(Debug, Clone, Default)]
 pub struct QueryIter {
-    row: usize,
-    row_start: usize,
-    row_end: usize,
+    column: usize,
     column_start: usize,
     column_end: usize,
-    cur_row: usize,
+    row_start: usize,
+    row_end: usize,
+    cur_column: usize,
 }
 
 impl Iterator for QueryIter {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.column_start > self.column_end {
+        if self.row_start > self.row_end {
             return None;
         }
-        let index = self.row * self.column_start + self.cur_row;
-        if self.cur_row < self.row_end {
-            self.cur_row += 1;
+        let index = self.column * self.row_start + self.cur_column;
+        if self.cur_column < self.column_end {
+            self.cur_column += 1;
         } else {
-            self.cur_row = self.row_start;
-            self.column_start += 1;
+            self.cur_column = self.column_start;
+            self.row_start += 1;
         }
         Some(index)
     }
