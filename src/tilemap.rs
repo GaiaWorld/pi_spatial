@@ -423,6 +423,7 @@ impl<K: Key, Aabb, T> AbNode<K, Aabb, T> {
     }
 }
 
+#[derive(Clone)]
 pub struct Iter<'a, N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> {
     next: K,
     container: &'a SecondaryMap<K, AbNode<K, AABB<N>, T>>,
