@@ -13,6 +13,7 @@ use pi_slotmap::*;
 
 // 八方向枚举
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub enum Direction {
     Left = 0,
     Right = 1,
@@ -252,7 +253,8 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         if tile_index.is_null() {
             return false;
         }
-        match self.ab_map.insert(id, AbNode::new(aabb, bind)) {
+        let next = self.tiles[tile_index].head;
+        match self.ab_map.insert(id, AbNode::new(aabb, bind, next)) {
             Some(_) => return false,
             None => (),
         }
@@ -294,24 +296,24 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
 
     /// 更新指定id的aabb
     pub fn update(&mut self, id: K, aabb: AABB<N>) -> bool {
-        let center = aabb.center();
-        // 获得所在瓦片
-        let new_tile_index = self.get_tile_index(center);
         let node = match self.ab_map.get_mut(id) {
             Some(n) => n,
             _ => return false,
         };
-        // 获得原来所在瓦片
+        // 获得所在瓦片的位置
+        let (new_r, new_c) = self.info.calc_tile_index(aabb.center());
+        // 获得原来所在瓦片的位置
         let (r, c) = self.info.calc_tile_index(node.value.0.center());
-        let tile_index = self.info.tile_index(r, c);
-        if tile_index == new_tile_index {
-            node.value.0 = aabb;
+        node.value.0 = aabb;
+        if new_r == r && new_c == c {
             return true;
         }
-        node.value.0 = aabb;
+        let tile_index = self.info.tile_index(r, c);
+        let new_tile_index = self.info.tile_index(new_r, new_c);
         let prev = node.prev;
         let next = node.next;
         node.prev = K::null();
+        node.next = self.tiles[new_tile_index].head;
         self.tiles[tile_index].remove(&mut self.ab_map, prev, next);
         self.tiles[new_tile_index].add(&mut self.ab_map, id);
         true
@@ -364,7 +366,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         self.tiles[tile_index].remove(&mut self.ab_map, node.prev, node.next);
         Some((node.value.0, node.value.1))
     }
-    /// 移动指定id的aabb
+    /// 获得指定id的所在的tile
     pub fn get_tile_index_by_id(&self, id: K) -> usize {
         let node = match self.ab_map.get(id) {
             Some(n) => n,
@@ -393,8 +395,6 @@ impl<K: Key> NodeList<K> {
         if !self.head.is_null() {
             let n = unsafe { map.get_unchecked_mut(self.head) };
             n.prev = id;
-            let n = unsafe { map.get_unchecked_mut(id) };
-            n.next = self.head;
         }
         self.head = id;
         self.len += 1;
@@ -427,11 +427,11 @@ pub struct AbNode<K: Key, Aabb, T> {
     next: K,          // 后ab节点
 }
 impl<K: Key, Aabb, T> AbNode<K, Aabb, T> {
-    pub fn new(aabb: Aabb, bind: T) -> Self {
+    pub fn new(aabb: Aabb, bind: T, next: K) -> Self {
         AbNode {
             value: (aabb, bind),
             prev: K::null(),
-            next: K::null(),
+            next,
         }
     }
 }
