@@ -261,7 +261,10 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         self.tiles[tile_index].add(&mut self.ab_map, id);
         true
     }
-
+    /// 获取所有id的aabb及其绑定的迭代器
+    pub fn iter(&self) -> pi_slotmap::secondary::Iter<K, AbNode<K, AABB<N>, T>> {
+        self.ab_map.iter()
+    }
     /// 获取指定id的aabb及其绑定
     pub fn get(&self, id: K) -> Option<&(AABB<N>, T)> {
         match self.ab_map.get(id) {
@@ -422,7 +425,7 @@ impl<K: Key> NodeList<K> {
 
 #[derive(Debug, Clone)]
 pub struct AbNode<K: Key, Aabb, T> {
-    value: (Aabb, T), // 包围盒
+    pub value: (Aabb, T), // 包围盒
     prev: K,          // 前ab节点
     next: K,          // 后ab节点
 }
