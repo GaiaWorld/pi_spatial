@@ -5,8 +5,8 @@
 //! AABB的范围相交查询时，需要根据最大节点的大小，扩大相应范围，这样如果边界上有节点，也可以被查到相交。
 
 use nalgebra::*;
-use parry2d::bounding_volume::*;
 use num_traits::cast::AsPrimitive;
+use parry2d::bounding_volume::*;
 use parry2d::math::Real;
 use pi_null::*;
 use pi_slotmap::*;
@@ -26,7 +26,7 @@ pub enum Direction {
 }
 /// 获得指定位置瓦片的上下左右四个瓦片， 如果为数组元素为null，则超出边界
 pub fn get_4d_neighbors(tile_index: usize, column: usize, count: usize) -> [usize; 4] {
-    let mut arr = Default::default();
+    let mut arr = [Null::null(), Null::null(), Null::null(), Null::null()];
     if tile_index >= count + column {
         return arr;
     }
@@ -51,7 +51,16 @@ pub fn get_4d_neighbors(tile_index: usize, column: usize, count: usize) -> [usiz
 }
 /// 获得指定位置瓦片周围的八个瓦片， 如果为数组元素为null，则超出边界
 pub fn get_8d_neighbors(tile_index: usize, column: usize, count: usize) -> [usize; 8] {
-    let mut arr = Default::default();
+    let mut arr = [
+        Null::null(),
+        Null::null(),
+        Null::null(),
+        Null::null(),
+        Null::null(),
+        Null::null(),
+        Null::null(),
+        Null::null(),
+    ];
     if tile_index >= count + column {
         return arr;
     }
@@ -157,7 +166,6 @@ impl MapInfo {
     pub fn tile_row_column(&self, tile_index: usize) -> (usize, usize) {
         (tile_index / self.column, tile_index % self.column)
     }
-
 }
 
 ///
@@ -418,8 +426,8 @@ impl<K: Key> NodeList<K> {
 #[derive(Debug, Clone)]
 pub struct AbNode<K: Key, Aabb, T> {
     pub value: (Aabb, T), // 包围盒
-    prev: K,          // 前ab节点
-    next: K,          // 后ab节点
+    prev: K,              // 前ab节点
+    next: K,              // 后ab节点
 }
 impl<K: Key, Aabb, T> AbNode<K, Aabb, T> {
     pub fn new(aabb: Aabb, bind: T, next: K) -> Self {
@@ -437,9 +445,7 @@ pub struct Iter<'a, K: Key, T> {
     container: &'a SecondaryMap<K, AbNode<K, Aabb, T>>,
 }
 
-impl<'a, K: Key, T> Iterator
-    for Iter<'a, K, T>
-{
+impl<'a, K: Key, T> Iterator for Iter<'a, K, T> {
     type Item = (K, &'a Aabb, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
