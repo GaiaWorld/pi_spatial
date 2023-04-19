@@ -1,60 +1,57 @@
 //! 四叉相关接口
 
 use std::fmt;
-use std::marker::PhantomData;
 use std::mem;
 
 use nalgebra::*;
-use ncollide2d::bounding_volume::*;
-use num_traits::{Float, FromPrimitive};
+use parry2d::{bounding_volume::*, math::Real};
+use num_traits::{FromPrimitive, One, Zero, AsPrimitive};
 use pi_slotmap::Key;
 
 use crate::*;
 
 /// 四叉树
-pub type QuadTree<K, S, T> = Tree<K, QuadHelper<S>, T, 4>;
+pub type QuadTree<K, T> = Tree<K, QuadHelper, T, 4>;
 
 #[derive(Debug, Clone)]
-pub struct QuadHelper<S: Scalar + RealField + Float> {
-    phantom: PhantomData<S>,
-}
+pub struct QuadHelper();
 
-impl<S: Scalar + RealField + Float> Helper<4> for QuadHelper<S> {
-    type Point = Point2<S>;
-    type Vector = Vector2<S>;
-    type Aabb = AABB<S>;
+impl Helper<4> for QuadHelper {
+    type Point = Point2<Real>;
+    type Vector = Vector2<Real>;
+    type Aabb = Aabb;
 
     /// 获得AABB的差
-    fn aabb_extents(aabb: &AABB<S>) -> Vector2<S> {
+    fn aabb_extents(aabb: &Aabb) -> Vector2<Real> {
         aabb.extents()
     }
     /// 移动AABB
-    fn aabb_shift(aabb: &AABB<S>, distance: &Vector2<S>) -> AABB<S> {
-        AABB::new(aabb.mins + distance, aabb.maxs + distance)
+    fn aabb_shift(aabb: &Aabb, distance: &Vector2<Real>) -> Aabb {
+        Aabb::new(aabb.mins + distance, aabb.maxs + distance)
     }
     /// 判断指定的aabb是否包含另一个aabb
-    fn aabb_contains(aabb: &AABB<S>, other: &AABB<S>) -> bool {
+    fn aabb_contains(aabb: &Aabb, other: &Aabb) -> bool {
         aabb.contains(other)
     }
     /// 判断2个aabb是否相交
-    fn aabb_intersects(aabb: &AABB<S>, other: &AABB<S>) -> bool {
+    fn aabb_intersects(aabb: &Aabb, other: &Aabb) -> bool {
         aabb.intersects(other)
     }
     /// 计算四叉树的深度
     fn get_deap(
-        d: &mut Vector2<S>,
+        d: &mut Vector2<Real>,
         loose_layer: usize,
-        max_loose: &Vector2<S>,
+        max_loose: &Vector2<Real>,
         deep: usize,
-        min_loose: &Vector2<S>,
+        min_loose: &Vector2<Real>,
     ) -> usize {
-        let two = S::one() + S::one();
+        let two = Real::one() + Real::one();
         let x = ComplexField::powf(
-            (max_loose.x / d.x + S::one()) / two,
+            (max_loose.x / d.x + Real::one()) / two,
             FromPrimitive::from_usize(loose_layer).unwrap(),
         );
         let y = ComplexField::powf(
-            (max_loose.y / d.y + S::one()) / two,
+            (max_loose.y / d.y + Real::one()) / two,
             FromPrimitive::from_usize(loose_layer).unwrap(),
         );
         d.x *= x;
@@ -78,7 +75,7 @@ impl<S: Scalar + RealField + Float> Helper<4> for QuadHelper<S> {
 
     #[inline]
     /// 判定指定向量是否小于最小“松散”尺寸
-    fn smaller_than_min_loose(d: &Vector2<S>, min_loose: &Vector2<S>) -> bool {
+    fn smaller_than_min_loose(d: &Vector2<Real>, min_loose: &Vector2<Real>) -> bool {
         if d.x <= min_loose.x && d.y <= min_loose.y {
             return true;
         };
@@ -87,16 +84,16 @@ impl<S: Scalar + RealField + Float> Helper<4> for QuadHelper<S> {
 
     #[inline]
     /// 指定向量以及最大松散尺寸计算对应的层
-    fn calc_layer(loose: &Vector2<S>, el: &Vector2<S>) -> usize {
-        let x = if el.x == S::zero() {
+    fn calc_layer(loose: &Vector2<Real>, el: &Vector2<Real>) -> usize {
+        let x = if el.x == Real::zero() {
             usize::max_value()
         } else {
-            (loose.x / el.x).to_usize().unwrap()
+            (loose.x / el.x).as_()
         };
-        let y = if el.y == S::zero() {
+        let y = if el.y == Real::zero() {
             usize::max_value()
         } else {
-            (loose.y / el.y).to_usize().unwrap()
+            (loose.y / el.y).as_()
         };
 
         let min = x.min(y);
@@ -108,7 +105,7 @@ impl<S: Scalar + RealField + Float> Helper<4> for QuadHelper<S> {
 
     #[inline]
     /// 判断所在的子节点
-    fn get_child(point: &Point2<S>, aabb: &AABB<S>) -> usize {
+    fn get_child(point: &Point2<Real>, aabb: &Aabb) -> usize {
         let mut i: usize = 0;
         if aabb.maxs.x > point.x {
             i += 1;
@@ -120,44 +117,44 @@ impl<S: Scalar + RealField + Float> Helper<4> for QuadHelper<S> {
     }
 
     #[inline]
-    fn get_max_half_loose(aabb: &AABB<S>, loose: &Vector2<S>) -> Point2<S> {
-        let two = S::one() + S::one();
+    fn get_max_half_loose(aabb: &Aabb, loose: &Vector2<Real>) -> Point2<Real> {
+        let two = Real::one() + Real::one();
         let x = (aabb.mins.x + aabb.maxs.x + loose.x) / two;
         let y = (aabb.mins.y + aabb.maxs.y + loose.y) / two;
         Point2::new(x, y)
     }
 
     /// 创建ab的子节点集合
-    fn make_childs(aabb: &AABB<S>, loose: &Vector2<S>) -> [AABB<S>; 4] {
-        let two = S::one() + S::one();
+    fn make_childs(aabb: &Aabb, loose: &Vector2<Real>) -> [Aabb; 4] {
+        let two = Real::one() + Real::one();
         let x = (aabb.mins.x + aabb.maxs.x - loose.x) / two;
         let y = (aabb.mins.y + aabb.maxs.y - loose.y) / two;
         let p1 = Point2::new(x, y);
         let p2 = Self::get_max_half_loose(&aabb, &loose);
 	[
-            AABB::new(aabb.mins, p2),
-            AABB::new(
+            Aabb::new(aabb.mins, p2),
+            Aabb::new(
                 Point2::new(p1.x, aabb.mins.y),
                 Point2::new(aabb.maxs.x, p2.y),
             ),
-            AABB::new(
+            Aabb::new(
                 Point2::new(aabb.mins.x, p1.y),
                 Point2::new(p2.x, aabb.maxs.y),
             ),
-            AABB::new(p1, aabb.maxs),
+            Aabb::new(p1, aabb.maxs),
         ]
     }
 
     /// 指定创建ab的子节点
     fn create_child(
-        aabb: &AABB<S>,
-        loose: &Vector2<S>,
+        aabb: &Aabb,
+        loose: &Vector2<Real>,
         layer: usize,
         loose_layer: usize,
-        min_loose: &Vector2<S>,
+        min_loose: &Vector2<Real>,
         index: usize,
-    ) -> (AABB<S>, Vector2<S>) {
-        let two = S::one() + S::one();
+    ) -> (Aabb, Vector2<Real>) {
+        let two = Real::one() + Real::one();
         macro_rules! c1 {
             ($c:ident) => {
                 (aabb.mins.$c + aabb.maxs.$c - loose.$c) / two
@@ -169,16 +166,16 @@ impl<S: Scalar + RealField + Float> Helper<4> for QuadHelper<S> {
             };
         }
         let a = match index {
-            0 => AABB::new(aabb.mins, Point2::new(c2!(x), c2!(y))),
-            1 => AABB::new(
+            0 => Aabb::new(aabb.mins, Point2::new(c2!(x), c2!(y))),
+            1 => Aabb::new(
                 Point2::new(c1!(x), aabb.mins.y),
                 Point2::new(aabb.maxs.x, c2!(y)),
             ),
-            2 => AABB::new(
+            2 => Aabb::new(
                 Point2::new(aabb.mins.x, c1!(y)),
                 Point2::new(c2!(x), aabb.maxs.y),
             ),
-            _ => AABB::new(Point2::new(c1!(x), c1!(y)), aabb.maxs),
+            _ => Aabb::new(Point2::new(c1!(x), c1!(y)), aabb.maxs),
         };
         let loose = if layer < loose_layer {
             loose / two
@@ -193,7 +190,7 @@ impl<S: Scalar + RealField + Float> Helper<4> for QuadHelper<S> {
 /// quad节点查询函数的范本，aabb是否相交，参数a是查询参数，参数b是quad节点的aabb， 所以最常用的判断是左闭右开
 /// 应用方为了功能和性能，应该实现自己需要的quad节点的查询函数， 比如点查询， 球查询， 视锥体查询...
 #[inline]
-pub fn intersects<S: Scalar + RealField + Float>(a: &AABB<S>, b: &AABB<S>) -> bool {
+pub fn intersects(a: &Aabb, b: &Aabb) -> bool {
     a.mins.x <= b.maxs.x
         && a.maxs.x > b.mins.x
         && a.mins.y <= b.maxs.y
@@ -201,12 +198,12 @@ pub fn intersects<S: Scalar + RealField + Float>(a: &AABB<S>, b: &AABB<S>) -> bo
 }
 
 /// aabb的查询函数的参数
-pub struct AbQueryArgs<K: Key, S: Scalar + RealField + Float, T: Clone + PartialOrd> {
-    pub aabb: AABB<S>,
+pub struct AbQueryArgs<K: Key, T: Clone + PartialOrd> {
+    pub aabb: Aabb,
     pub result: (K, T),
 }
-impl<K: Key, S: Scalar + RealField + Float, T: Clone + PartialOrd> AbQueryArgs<K, S, T> {
-    pub fn new(aabb: AABB<S>, min: T) -> AbQueryArgs<K, S, T> {
+impl<K: Key, T: Clone + PartialOrd> AbQueryArgs<K, T> {
+    pub fn new(aabb: Aabb, min: T) -> AbQueryArgs<K, T> {
         AbQueryArgs {
             aabb: aabb,
             result: (K::null(), min),
@@ -216,10 +213,10 @@ impl<K: Key, S: Scalar + RealField + Float, T: Clone + PartialOrd> AbQueryArgs<K
 
 /// ab节点的查询函数, 这里只是一个简单范本，使用了quad节点的查询函数intersects
 /// 应用方为了功能和性能，应该实现自己需要的ab节点的查询函数， 比如点查询， 球查询-包含或相交， 视锥体查询...
-pub fn ab_query_func<K: Key, S: Scalar + RealField + Float, T: Clone + PartialOrd + fmt::Debug>(
-    arg: &mut AbQueryArgs<K, S, T>,
+pub fn ab_query_func<K: Key, T: Clone + PartialOrd + fmt::Debug>(
+    arg: &mut AbQueryArgs<K, T>,
     id: K,
-    aabb: &AABB<S>,
+    aabb: &Aabb,
     bind: &T,
 ) {
     // println!("ab_query_func: id: {}, bind:{:?}, arg: {:?}", id, bind, arg.result);
@@ -239,7 +236,7 @@ fn test1() {
     let max = Vector2::new(100f32, 100f32);
     let min = max / 100f32;
     let mut tree = QuadTree::new(
-        AABB::new(
+        Aabb::new(
             Point2::new(-1024f32, -1024f32),
             Point2::new(3072f32, 3072f32),
         ),
@@ -256,7 +253,7 @@ fn test1() {
 		keys.push(slot_map.insert(()));
         tree.add(
             keys.last().unwrap().clone(),
-            AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+            Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
             i + 1,
         );
     }
@@ -265,7 +262,7 @@ fn test1() {
     }
     tree.update(
         keys[1],
-        AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
     );
     for i in 1..tree.ab_map.len() + 1 {
         println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
@@ -274,11 +271,11 @@ fn test1() {
     for i in 1..tree.ab_map.len() + 1 {
         println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
     }
-    for i in 1..5 {
+    for i in 1..6 {
 		keys.push(slot_map.insert(()));
         tree.add(
             keys.last().unwrap().clone(),
-            AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+            Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
             i + 3,
         );
     }
@@ -287,16 +284,16 @@ fn test1() {
     }
     tree.update(
         keys[2],
-        AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
     );
     tree.update(
         keys[3],
-        AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
     );
 
     tree.update(
         keys[4],
-        AABB::new(
+        Aabb::new(
             Point2::new(0.0, 700.0),
             Point2::new(1000.0, 1400.0),
         ),
@@ -304,35 +301,35 @@ fn test1() {
 
     tree.update(
         keys[5],
-        AABB::new(
+        Aabb::new(
             Point2::new(0.0, 1400.0),
             Point2::new(1000.0, 1470.0),
         ),
     );
     tree.update(
         keys[6],
-        AABB::new(
+        Aabb::new(
             Point2::new(0.0, 1470.0),
             Point2::new(1000.0, 1540.0),
         ),
     );
     tree.update(
         keys[1],
-        AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
     );
     tree.collect();
     for i in 1..tree.ab_map.len() + 1 {
         println!("00002, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
     }
-    //   tree.update(1, AABB::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
-    //   tree.update(2, AABB::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
-    //   tree.update(3, AABB::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
-    //   tree.update(4, AABB::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
+    //   tree.update(1, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
+    //   tree.update(2, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
+    //   tree.update(3, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
+    //   tree.update(4, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
 
-    //   tree.update(5, AABB::new(Point2::new(0.0,800.0,0.0), Point2::new(1000.0, 1600.0, 1.0)));
+    //   tree.update(5, Aabb::new(Point2::new(0.0,800.0,0.0), Point2::new(1000.0, 1600.0, 1.0)));
 
-    //    tree.update(6, AABB::new(Point2::new(0.0,1600.0,0.0), Point2::new(1000.0, 2400.0, 1.0)));
-    //   tree.update(7, AABB::new(Point2::new(0.0,2400.0,0.0), Point2::new(1000.0, 3200.0, 1.0)));
+    //    tree.update(6, Aabb::new(Point2::new(0.0,1600.0,0.0), Point2::new(1000.0, 2400.0, 1.0)));
+    //   tree.update(7, Aabb::new(Point2::new(0.0,2400.0,0.0), Point2::new(1000.0, 3200.0, 1.0)));
     //   for i in 1..tree.ab_map.len() + 1 {
     //   println!("22222, id:{}, ab: {:?}", i, tree.ab_map.get(i).unwrap());
     //  }
@@ -345,11 +342,11 @@ fn test1() {
         );
     }
     println!("outer:{:?}", tree.outer);
-    let aabb = AABB::new(
+    let aabb = Aabb::new(
         Point2::new(500f32, 500f32),
         Point2::new(500f32, 500f32),
     );
-    let mut args: AbQueryArgs<DefaultKey, f32, usize> = AbQueryArgs::new(aabb.clone(), 0);
+    let mut args: AbQueryArgs<DefaultKey, usize> = AbQueryArgs::new(aabb.clone(), 0);
     tree.query(&aabb, intersects, &mut args, ab_query_func);
     //assert_eq!(args.result(), [1, 3, 4]);
 }
@@ -360,7 +357,7 @@ fn test1() {
 //     let max = Vector2::new(100f32, 100f32);
 //     let min = max / 100f32;
 //     let mut tree = QuadTree::new(
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(-1024f32, -1024f32),
 //             Point2::new(3072f32, 3072f32),
 //         ),
@@ -373,7 +370,7 @@ fn test1() {
 //     for i in 0..9 {
 //         tree.add(
 //             i + 1,
-//             AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//             Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //             i + 1,
 //         );
 //     }
@@ -385,7 +382,7 @@ fn test1() {
 //     }
 //     tree.update(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(0.0, 0.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(0.0, 0.0)),
 //     );
 //     tree.collect();
 //     for i in 1..tree.slab.len() + 1 {
@@ -406,7 +403,7 @@ fn test1() {
 //     let max = Vector2::new(100f32, 100f32);
 //     let min = max / 100f32;
 //     let mut tree = QuadTree::new(
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(-1024f32, -1024f32),
 //             Point2::new(3072f32, 3072f32),
 //         ),
@@ -419,7 +416,7 @@ fn test1() {
 //     for i in 0..6 {
 //         tree.add(
 //             i + 1,
-//             AABB::new(Point2::new(0.0, 0.0), Point2::new(0.1, 0.1)),
+//             Aabb::new(Point2::new(0.0, 0.0), Point2::new(0.1, 0.1)),
 //             i + 1,
 //         );
 //     }
@@ -453,24 +450,24 @@ fn test1() {
 //         println!("test4, id:{}, ab: {:?}", i, tree.ab_map.get(i).unwrap());
 //     }
 //     println!("outer:{:?}", tree.outer);
-//     let aabb = AABB::new(
+//     let aabb = Aabb::new(
 //         Point2::new(0.05f32, 0.05f32),
 //         Point2::new(0.05f32, 0.05f32),
 //     );
-//     let mut args: AbQueryArgs<f32, usize> = AbQueryArgs::new(aabb.clone(), 0);
+//     let mut args: AbQueryArgs<f32, usize> = AbQueryArgReal::new(aabb.clone(), 0);
 //     tree.query(&aabb, intersects, &mut args, ab_query_func);
 //     assert_eq!(args.result.1, 3);
 // }
 
 // #[test]
 // fn test3() {
-//     let aabb = AABB::new(
+//     let aabb = Aabb::new(
 //         Point2::new(700.0, 100.0),
 //         Point2::new(700.0, 100.0),
 //     );
-//     let mut args: AbQueryArgs<f32, usize> = AbQueryArgs::new(aabb.clone(), 0);
+//     let mut args: AbQueryArgs<f32, usize> = AbQueryArgReal::new(aabb.clone(), 0);
 
-//     // let mut tree = Tree::new(AABB::new(Point2::new(0f32,0f32,0f32), Point2::new(1000f32,1000f32,1000f32)),
+//     // let mut tree = Tree::new(Aabb::new(Point2::new(0f32,0f32,0f32), Point2::new(1000f32,1000f32,1000f32)),
 //     // 	0,
 //     // 	0,
 //     // 	0,
@@ -479,7 +476,7 @@ fn test1() {
 //     let max = Vector2::new(100f32, 100f32);
 //     let min = max / 100f32;
 //     let mut tree = QuadTree::new(
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(-1024f32, -1024f32),
 //             Point2::new(3072f32, 3072f32),
 //         ),
@@ -491,106 +488,106 @@ fn test1() {
 //     );
 //     tree.add(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.collect();
 
 //     tree.update(
 //         0,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 
 //     tree.add(
 //         3,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         4,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         5,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         6,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         7,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         8,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         9,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.collect();
 //     tree.update(
 //         3,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
 //     );
 //     tree.update(
 //         4,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
 //     );
 //     tree.update(
 //         5,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
 //     );
 //     tree.update(
 //         6,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
 //     );
 //     tree.update(
 //         7,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
 //     );
 //     tree.update(
 //         8,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1600.0, 175.0),
 //         ),
 //     );
 //     tree.update(
 //         9,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1440.0, 140.0),
 //         ),
 //     );
 //     tree.update(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.query(&aabb, intersects, &mut args, ab_query_func);
 //     tree.remove(7);
@@ -599,58 +596,58 @@ fn test1() {
 
 //     tree.add(
 //         5,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         6,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         7,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.collect();
 //     tree.update(
 //         5,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
 //     );
 //     tree.update(
 //         6,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
 //     );
 //     tree.update(
 //         7,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
 //     );
 //     tree.update(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         3,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
 //     );
 //     tree.update(
 //         4,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
 //     );
 //     tree.update(
 //         8,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1600.0, 175.0),
 //         ),
 //     );
 //     tree.update(
 //         9,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1440.0, 140.0),
 //         ),
@@ -673,59 +670,59 @@ fn test1() {
 
 //     tree.add(
 //         5,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         6,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         7,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.collect();
 
 //     tree.update(
 //         5,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
 //     );
 //     tree.update(
 //         6,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
 //     );
 //     tree.update(
 //         7,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
 //     );
 //     tree.update(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         3,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
 //     );
 //     tree.update(
 //         4,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
 //     );
 //     tree.update(
 //         8,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1600.0, 175.0),
 //         ),
 //     );
 //     tree.update(
 //         9,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1440.0, 140.0),
 //         ),
@@ -751,16 +748,16 @@ fn test1() {
 // fn test4() {
 //     use rand;
 //     use rand::Rng;
-//     let aabb = AABB::new(
+//     let aabb = Aabb::new(
 //         Point2::new(700.0, 100.0),
 //         Point2::new(700.0, 100.0),
 //     );
-//     let mut args: AbQueryArgs<f32, usize> = AbQueryArgs::new(aabb.clone(), 0);
+//     let mut args: AbQueryArgs<f32, usize> = AbQueryArgReal::new(aabb.clone(), 0);
 
 //     let max = Vector2::new(100f32, 100f32);
 //     let min = max / 100f32;
 //     let mut tree = QuadTree::new(
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(-1024f32, -1024f32),
 //             Point2::new(3072f32, 3072f32),
 //         ),
@@ -772,162 +769,162 @@ fn test1() {
 //     );
 //     tree.add(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.collect();
 
 //     tree.update(
 //         0,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 
 //     tree.add(
 //         3,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         4,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         5,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         6,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         7,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         8,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         9,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.collect();
 //     tree.update(
 //         3,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
 //     );
 //     tree.update(
 //         4,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
 //     );
 //     tree.update(
 //         5,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
 //     );
 //     tree.update(
 //         6,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
 //     );
 //     tree.update(
 //         7,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
 //     );
 //     tree.update(
 //         8,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1600.0, 175.0),
 //         ),
 //     );
 //     tree.update(
 //         9,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1440.0, 140.0),
 //         ),
 //     );
 //     tree.update(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 
 //     tree.add(
 //         10,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         11,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         12,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.collect();
 //     tree.update(
 //         10,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
 //     );
 //     tree.update(
 //         11,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
 //     );
 //     tree.update(
 //         12,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
 //     );
 //     tree.update(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         3,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
 //     );
 //     tree.update(
 //         4,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
 //     );
 //     tree.update(
 //         8,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1600.0, 175.0),
 //         ),
 //     );
 //     tree.update(
 //         9,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1440.0, 140.0),
 //         ),
@@ -935,17 +932,17 @@ fn test1() {
 
 //     tree.add(
 //         13,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         14,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.add(
 //         15,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
 //         1,
 //     );
 //     tree.collect();
@@ -953,44 +950,44 @@ fn test1() {
 //     //log(&tree.slab, &tree.ab_map, 10000);
 //     tree.update(
 //         13,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(640.0, 140.0)),
 //     );
 //     //log(&tree.slab, &tree.ab_map, 13);
 //     println!("quad========================");
 //     tree.update(
 //         14,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(512.0, 112.0)),
 //     );
 //     tree.update(
 //         15,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(410.0, 90.0)),
 //     );
 //     tree.update(
 //         1,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         2,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
 //     );
 //     tree.update(
 //         3,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 350.0)),
 //     );
 //     tree.update(
 //         4,
-//         AABB::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
+//         Aabb::new(Point2::new(0.0, 0.0), Point2::new(800.0, 175.0)),
 //     );
 //     tree.update(
 //         8,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1600.0, 175.0),
 //         ),
 //     );
 //     tree.update(
 //         9,
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(800.0, 0.0),
 //             Point2::new(1440.0, 140.0),
 //         ),
@@ -1116,7 +1113,7 @@ fn test1() {
 //     let max = Vector2::new(100f32, 100f32);
 //     let min = max / 100f32;
 //     let mut tree = QuadTree::new(
-//         AABB::new(
+//         Aabb::new(
 //             Point2::new(0.0, 0.0),
 //             Point2::new(max_size, max_size),
 //         ),
@@ -1138,7 +1135,7 @@ fn test1() {
 
 //         tree.add(
 //             i + 1,
-//             AABB::new(Point2::new(x, y), Point2::new(x, y)),
+//             Aabb::new(Point2::new(x, y), Point2::new(x, y)),
 //             i + 1,
 //         );
 
@@ -1149,7 +1146,7 @@ fn test1() {
 
 //         // TODO: 改成 7.0 就可以了。
 //         let size: f32 = 1.0;
-//         let aabb = AABB::new(
+//         let aabb = Aabb::new(
 //             Point2::new(x_, y_),
 //             Point2::new(x_ + size, y_ + size),
 //         );
@@ -1163,7 +1160,7 @@ fn test1() {
 //         //     log(&tree.slab, &tree.ab_map, i);
 //         // }
 //         tree.collect();
-//         // let aabb = AABB::new(
+//         // let aabb = Aabb::new(
 //         //     Point2::new(aabb.min.x - 1.0, aabb.min.y - 1.0, aabb.min.z - 1.0),
 //         //     Point2::new(aabb.min.x + 1.0, aabb.min.y + 1.0, aabb.min.z + 1.0),
 //         // );
@@ -1172,7 +1169,7 @@ fn test1() {
 //         //     assert_eq!(check_tree(&tree.slab, &tree.ab_map, old, i), false);
 //         //     log(&tree.slab, &tree.ab_map,i);
 //         // }
-//         let mut args: AbQueryArgs<f32, usize> = AbQueryArgs::new(aabb.clone(), 0);
+//         let mut args: AbQueryArgs<f32, usize> = AbQueryArgReal::new(aabb.clone(), 0);
 //         tree.query(&aabb, intersects, &mut args, ab_query_func);
 //         assert!(args.result.0 > 0);
 //     }

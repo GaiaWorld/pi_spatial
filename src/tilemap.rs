@@ -5,9 +5,9 @@
 //! AABB的范围相交查询时，需要根据最大节点的大小，扩大相应范围，这样如果边界上有节点，也可以被查到相交。
 
 use nalgebra::*;
-use ncollide2d::bounding_volume::*;
+use parry2d::bounding_volume::*;
 use num_traits::cast::AsPrimitive;
-use num_traits::*;
+use parry2d::math::Real;
 use pi_null::*;
 use pi_slotmap::*;
 
@@ -118,9 +118,9 @@ pub fn get_8d_neighbors(tile_index: usize, column: usize, count: usize) -> [usiz
     }
     arr
 }
-pub struct MapInfo<N: Scalar + RealField + Float + AsPrimitive<usize>> {
+pub struct MapInfo {
     // 场景的范围
-    pub bounds: AABB<N>,
+    pub bounds: Aabb,
     // 该图最大行数
     pub row: usize,
     // 该图最大列数
@@ -128,28 +128,24 @@ pub struct MapInfo<N: Scalar + RealField + Float + AsPrimitive<usize>> {
     // 瓦片总数量
     pub count: usize,
     // 大小
-    size: Vector2<N>,
-    // 最大行数
-    row_n: N,
-    // 最大列数
-    column_n: N,
+    size: Vector2<Real>,
 }
-impl<N: Scalar + RealField + Float + AsPrimitive<usize>> MapInfo<N> {
+impl MapInfo {
     /// 计算指定位置的瓦片
-    pub fn calc_tile_index(&self, loc: Point2<N>) -> (usize, usize) {
+    pub fn calc_tile_index(&self, loc: Point2<Real>) -> (usize, usize) {
         let c = if loc[0] <= self.bounds.mins[0] {
             0
         } else if loc[0] >= self.bounds.maxs[0] {
             self.column - 1
         } else {
-            ((loc[0] - self.bounds.mins[0]) * self.column_n / self.size[0]).as_()
+            ((loc[0] - self.bounds.mins[0]) * self.column as Real / self.size[0]).as_()
         };
         let r = if loc[1] <= self.bounds.mins[1] {
             0
         } else if loc[1] >= self.bounds.maxs[1] {
             self.row - 1
         } else {
-            ((loc[1] - self.bounds.mins[1]) * self.row_n / self.size[1]).as_()
+            ((loc[1] - self.bounds.mins[1]) * self.row as Real / self.size[1]).as_()
         };
         (r, c)
     }
@@ -172,35 +168,31 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>> MapInfo<N> {
 /// + 浮点数算术运算，可拷贝，可偏序比较；
 /// + 实际使用的时候就是浮点数字类型，比如：f32/f64；
 ///
-pub struct TileMap<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> {
+pub struct TileMap<K: Key, T> {
     //所有存储aabb的节点
-    ab_map: SecondaryMap<K, AbNode<K, AABB<N>, T>>,
+    ab_map: SecondaryMap<K, AbNode<K, Aabb, T>>,
     // 该图所有瓦片
     tiles: Vec<NodeList<K>>,
     // 场景的范围
-    pub info: MapInfo<N>,
+    pub info: MapInfo,
 }
 
-impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K, T> {
+impl<K: Key, T> TileMap<K, T> {
     ///
     /// 新建一个瓦片图
     ///
     /// 需传入根节点（即全场景），指定瓦片图的行数和列数
-    pub fn new(bounds: AABB<N>, row: usize, column: usize) -> Self {
+    pub fn new(bounds: Aabb, row: usize, column: usize) -> Self {
         let len = row * column;
         let mut tiles = Vec::with_capacity(len);
         tiles.resize_with(len, Default::default);
         let size = bounds.extents();
-        let row_n = FromPrimitive::from_usize(row).unwrap();
-        let column_n = FromPrimitive::from_usize(column).unwrap();
         let info = MapInfo {
             bounds,
             row,
             column,
             count: row * column,
             size,
-            row_n,
-            column_n,
         };
         TileMap {
             ab_map: Default::default(),
@@ -210,12 +202,12 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
     }
 
     /// 获得指定位置的瓦片，超出地图边界则返回最近的边界瓦片
-    pub fn get_tile_index(&self, loc: Point2<N>) -> usize {
+    pub fn get_tile_index(&self, loc: Point2<Real>) -> usize {
         let (r, c) = self.info.calc_tile_index(loc);
         self.info.tile_index(r, c)
     }
     /// 获得指定位置瓦片的节点数量和节点迭代器
-    pub fn get_tile_iter<'a>(&'a self, tile_index: usize) -> (usize, Iter<'a, N, K, T>) {
+    pub fn get_tile_iter<'a>(&'a self, tile_index: usize) -> (usize, Iter<'a, K, T>) {
         let tile = &self.tiles[tile_index];
         let id = tile.head;
         (
@@ -227,7 +219,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         )
     }
     /// 获得指定范围的tile数量和迭代器
-    pub fn query_iter(&self, aabb: &AABB<N>) -> (usize, QueryIter) {
+    pub fn query_iter(&self, aabb: &Aabb) -> (usize, QueryIter) {
         // 获得min所在瓦片
         let (row_start, column_start) = self.info.calc_tile_index(aabb.mins);
         // 获得max所在瓦片
@@ -245,7 +237,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         )
     }
     /// 指定id，在地图中添加一个aabb单元及其绑定
-    pub fn add(&mut self, id: K, aabb: AABB<N>, bind: T) -> bool {
+    pub fn add(&mut self, id: K, aabb: Aabb, bind: T) -> bool {
         let center = aabb.center();
         // 获得所在瓦片
         let tile_index = self.get_tile_index(center);
@@ -262,11 +254,11 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         true
     }
     /// 获取所有id的aabb及其绑定的迭代器
-    pub fn iter(&self) -> pi_slotmap::secondary::Iter<K, AbNode<K, AABB<N>, T>> {
+    pub fn iter(&self) -> pi_slotmap::secondary::Iter<K, AbNode<K, Aabb, T>> {
         self.ab_map.iter()
     }
     /// 获取指定id的aabb及其绑定
-    pub fn get(&self, id: K) -> Option<&(AABB<N>, T)> {
+    pub fn get(&self, id: K) -> Option<&(Aabb, T)> {
         match self.ab_map.get(id) {
             Some(node) => Some(&node.value),
             None => None,
@@ -274,7 +266,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
     }
 
     /// 获取指定id的aabb及其绑定
-    pub unsafe fn get_unchecked(&self, id: K) -> &(AABB<N>, T) {
+    pub unsafe fn get_unchecked(&self, id: K) -> &(Aabb, T) {
         &self.ab_map.get_unchecked(id).value
     }
 
@@ -298,7 +290,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
     }
 
     /// 更新指定id的aabb
-    pub fn update(&mut self, id: K, aabb: AABB<N>) -> bool {
+    pub fn update(&mut self, id: K, aabb: Aabb) -> bool {
         let node = match self.ab_map.get_mut(id) {
             Some(n) => n,
             _ => return false,
@@ -323,13 +315,13 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
     }
 
     /// 移动指定id的aabb
-    pub fn shift(&mut self, id: K, distance: Vector2<N>) -> bool {
+    pub fn shift(&mut self, id: K, distance: Vector2<Real>) -> bool {
         let node = match self.ab_map.get_mut(id) {
             Some(n) => n,
             _ => return false,
         };
         // 新aabb
-        let aabb = AABB::new(node.value.0.mins + distance, node.value.0.maxs + distance);
+        let aabb = Aabb::new(node.value.0.mins + distance, node.value.0.maxs + distance);
         // 获得新的所在瓦片
         let (new_r, new_c) = self.info.calc_tile_index(aabb.center());
         // 获得原来所在瓦片
@@ -360,7 +352,7 @@ impl<N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> TileMap<N, K
         }
     }
     /// 移除指定id的aabb及其绑定
-    pub fn remove(&mut self, id: K) -> Option<(AABB<N>, T)> {
+    pub fn remove(&mut self, id: K) -> Option<(Aabb, T)> {
         let node = match self.ab_map.remove(id) {
             Some(n) => n,
             _ => return None,
@@ -440,15 +432,15 @@ impl<K: Key, Aabb, T> AbNode<K, Aabb, T> {
 }
 
 #[derive(Clone)]
-pub struct Iter<'a, N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> {
+pub struct Iter<'a, K: Key, T> {
     next: K,
-    container: &'a SecondaryMap<K, AbNode<K, AABB<N>, T>>,
+    container: &'a SecondaryMap<K, AbNode<K, Aabb, T>>,
 }
 
-impl<'a, N: Scalar + RealField + Float + AsPrimitive<usize>, K: Key, T> Iterator
-    for Iter<'a, N, K, T>
+impl<'a, K: Key, T> Iterator
+    for Iter<'a, K, T>
 {
-    type Item = (K, &'a AABB<N>, &'a T);
+    type Item = (K, &'a Aabb, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.next.is_null() {
@@ -494,7 +486,7 @@ fn test1() {
 
     println!("test1-----------------------------------------");
     let mut tree = TileMap::new(
-        AABB::new(
+        Aabb::new(
             Point2::new(-1024f32, -1024f32),
             Point2::new(3072f32, 3072f32),
         ),
@@ -508,7 +500,7 @@ fn test1() {
         keys.push(slot_map.insert(()));
         tree.add(
             keys.last().unwrap().clone(),
-            AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+            Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
             i + 1,
         );
     }
@@ -522,7 +514,7 @@ fn test1() {
     }
     tree.update(
         keys[1],
-        AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
     );
     for i in 1..tree.ab_map.len() + 1 {
         println!(
@@ -545,7 +537,7 @@ fn test1() {
         keys.push(slot_map.insert(()));
         tree.add(
             keys.last().unwrap().clone(),
-            AABB::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+            Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
             i + 3,
         );
     }
@@ -562,29 +554,29 @@ fn test1() {
     }
     tree.update(
         keys[2],
-        AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
     );
     tree.update(
         keys[3],
-        AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
     );
 
     tree.update(
         keys[4],
-        AABB::new(Point2::new(0.0, 700.0), Point2::new(1000.0, 1400.0)),
+        Aabb::new(Point2::new(0.0, 700.0), Point2::new(1000.0, 1400.0)),
     );
 
     tree.update(
         keys[5],
-        AABB::new(Point2::new(0.0, 1400.0), Point2::new(1000.0, 1470.0)),
+        Aabb::new(Point2::new(0.0, 1400.0), Point2::new(1000.0, 1470.0)),
     );
     tree.update(
         keys[6],
-        AABB::new(Point2::new(0.0, 1470.0), Point2::new(1000.0, 1540.0)),
+        Aabb::new(Point2::new(0.0, 1470.0), Point2::new(1000.0, 1540.0)),
     );
     tree.update(
         keys[1],
-        AABB::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
     );
 
     for i in 1..tree.ab_map.len() + 1 {
@@ -595,20 +587,20 @@ fn test1() {
             tree.get_tile_index_by_id(keys[i])
         );
     }
-    //   tree.update(1, AABB::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
-    //   tree.update(2, AABB::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
-    //   tree.update(3, AABB::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
-    //   tree.update(4, AABB::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
+    //   tree.update(1, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
+    //   tree.update(2, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
+    //   tree.update(3, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
+    //   tree.update(4, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
 
-    //   tree.update(5, AABB::new(Point2::new(0.0,800.0,0.0), Point2::new(1000.0, 1600.0, 1.0)));
+    //   tree.update(5, Aabb::new(Point2::new(0.0,800.0,0.0), Point2::new(1000.0, 1600.0, 1.0)));
 
-    //    tree.update(6, AABB::new(Point2::new(0.0,1600.0,0.0), Point2::new(1000.0, 2400.0, 1.0)));
-    //   tree.update(7, AABB::new(Point2::new(0.0,2400.0,0.0), Point2::new(1000.0, 3200.0, 1.0)));
+    //    tree.update(6, Aabb::new(Point2::new(0.0,1600.0,0.0), Point2::new(1000.0, 2400.0, 1.0)));
+    //   tree.update(7, Aabb::new(Point2::new(0.0,2400.0,0.0), Point2::new(1000.0, 3200.0, 1.0)));
     //   for i in 1..tree.ab_map.len() + 1 {
     //   println!("22222, id:{}, ab: {:?}", i, tree.ab_map.get(i).unwrap());
     //  }
     // tree.collect();
-    let aabb = AABB::new(Point2::new(500f32, 500f32), Point2::new(1100f32, 1100f32));
+    let aabb = Aabb::new(Point2::new(500f32, 500f32), Point2::new(1100f32, 1100f32));
     let (len, iter) = tree.query_iter(&aabb);
     println!("query_iter count:{},", len);
     for i in iter {
