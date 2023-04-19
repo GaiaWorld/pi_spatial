@@ -1,12 +1,12 @@
 [package]
-name = "pi_sparialtree"
+name = "pi_spatial"
 version = "0.4.0"
 authors = ["yineng <dev@dev.com>"]
 edition = "2021"
 description = "sparial octtree quadtree"
-repository = "https://github.com/GaiaWorld/pi_sparialtree"
+repository = "https://github.com/GaiaWorld/pi_spatial"
 license = "MIT OR Apache-2.0"
-keywords = ["pi", "Sparial", "Tree"]
+keywords = ["pi", "spatial", "partition"]
 
 [dependencies]
 parry2d = "0.13"
