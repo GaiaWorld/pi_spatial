@@ -8,7 +8,7 @@ use parry2d::{bounding_volume::*, math::Real};
 use num_traits::{FromPrimitive, One, Zero, AsPrimitive};
 use pi_slotmap::Key;
 
-use crate::*;
+use crate::tree::{Helper, Tree};
 
 /// 四叉树
 pub type QuadTree<K, T> = Tree<K, QuadHelper, T, 4>;

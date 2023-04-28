@@ -6,7 +6,8 @@ use nalgebra::*;
 use parry3d::{bounding_volume::*, math::Real};
 use num_traits::{One, Zero, FromPrimitive, AsPrimitive};
 
-use crate::*;
+use crate::tree::{Helper, Tree};
+
 
 /// 八叉树
 pub type OctTree<K, T> = Tree<K, OctHelper, T, 8>;
