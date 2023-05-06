@@ -11,160 +11,44 @@ use parry2d::math::Real;
 use pi_null::*;
 use pi_slotmap::*;
 
-// 八方向枚举
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub enum Direction {
-    Left = 0,
-    Right = 1,
-    Up = 2,
-    Down = 3,
-    UpLeft = 4,
-    UpRight = 5,
-    DownLeft = 6,
-    DownRight = 7,
-}
-/// 获得指定位置瓦片的上下左右四个瓦片， 如果为数组元素为null，则超出边界
-pub fn get_4d_neighbors(tile_index: usize, column: usize, count: usize) -> [usize; 4] {
-    let mut arr = [Null::null(), Null::null(), Null::null(), Null::null()];
-    if tile_index >= count + column {
-        return arr;
-    }
-    let c = tile_index % column;
-    if c == column - 1 {
-        arr[Direction::Left as usize] = tile_index - 1;
-    } else if c > 0 {
-        arr[Direction::Left as usize] = tile_index - 1;
-        arr[Direction::Right as usize] = tile_index + 1;
-    } else {
-        arr[Direction::Right as usize] = tile_index + 1;
-    }
-    if tile_index + column >= count {
-        arr[Direction::Up as usize] = tile_index - column;
-    } else if tile_index >= column {
-        arr[Direction::Up as usize] = tile_index - column;
-        arr[Direction::Down as usize] = tile_index + column;
-    } else {
-        arr[Direction::Down as usize] = tile_index + column;
-    }
-    arr
-}
-/// 获得指定位置瓦片周围的八个瓦片， 如果为数组元素为null，则超出边界
-pub fn get_8d_neighbors(tile_index: usize, column: usize, count: usize) -> [usize; 8] {
-    let mut arr = [
-        Null::null(),
-        Null::null(),
-        Null::null(),
-        Null::null(),
-        Null::null(),
-        Null::null(),
-        Null::null(),
-        Null::null(),
-    ];
-    if tile_index >= count + column {
-        return arr;
-    }
-    let c = tile_index % column;
-    if tile_index >= count {
-        arr[Direction::Up as usize] = tile_index - column;
-        if c == column - 1 {
-            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
-        } else if c > 0 {
-            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
-            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
-        } else {
-            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
-        }
-        return arr;
-    }
-    if c == column - 1 {
-        arr[Direction::Left as usize] = tile_index - 1;
-        if tile_index + column >= count {
-            arr[Direction::Up as usize] = tile_index - column;
-            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
-        } else if tile_index >= column {
-            arr[Direction::Up as usize] = tile_index - column;
-            arr[Direction::Down as usize] = tile_index + column;
-            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
-            arr[Direction::DownLeft as usize] = arr[Direction::Down as usize] - 1;
-        } else {
-            arr[Direction::Down as usize] = tile_index + column;
-            arr[Direction::DownLeft as usize] = arr[Direction::Down as usize] - 1;
-        }
-    } else if c > 0 {
-        arr[Direction::Left as usize] = tile_index - 1;
-        arr[Direction::Right as usize] = tile_index + 1;
-        if tile_index + column >= count {
-            arr[Direction::Up as usize] = tile_index - column;
-            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
-            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
-        } else if tile_index >= column {
-            arr[Direction::Up as usize] = tile_index - column;
-            arr[Direction::Down as usize] = tile_index + column;
-            arr[Direction::UpLeft as usize] = arr[Direction::Up as usize] - 1;
-            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
-            arr[Direction::DownLeft as usize] = arr[Direction::Down as usize] - 1;
-            arr[Direction::DownRight as usize] = arr[Direction::Down as usize] + 1;
-        } else {
-            arr[Direction::Down as usize] = tile_index + column;
-            arr[Direction::DownLeft as usize] = arr[Direction::Down as usize] - 1;
-            arr[Direction::DownRight as usize] = arr[Direction::Down as usize] + 1;
-        }
-    } else {
-        arr[Direction::Right as usize] = tile_index + 1;
-        if tile_index + column >= count {
-            arr[Direction::Up as usize] = tile_index - column;
-            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
-        } else if tile_index >= column {
-            arr[Direction::Up as usize] = tile_index - column;
-            arr[Direction::Down as usize] = tile_index + column;
-            arr[Direction::UpRight as usize] = arr[Direction::Up as usize] + 1;
-            arr[Direction::DownRight as usize] = arr[Direction::Down as usize] + 1;
-        } else {
-            arr[Direction::Down as usize] = tile_index + column;
-            arr[Direction::DownRight as usize] = arr[Direction::Down as usize] + 1;
-        }
-    }
-    arr
-}
 pub struct MapInfo {
     // 场景的范围
     pub bounds: Aabb,
-    // 该图最大行数
-    pub row: usize,
-    // 该图最大列数
-    pub column: usize,
+    // 该图宽度
+    pub width: usize,
+    // 该图高度
+    pub height: usize,
     // 瓦片总数量
-    pub count: usize,
+    pub amount: usize,
     // 大小
     size: Vector2<Real>,
 }
 impl MapInfo {
-    /// 计算指定位置的瓦片
+    /// 计算指定位置的瓦片坐标
     pub fn calc_tile_index(&self, loc: Point2<Real>) -> (usize, usize) {
-        let c = if loc[0] <= self.bounds.mins[0] {
+        let x = if loc[0] <= self.bounds.mins[0] {
             0
         } else if loc[0] >= self.bounds.maxs[0] {
-            self.column - 1
+            self.width - 1
         } else {
-            ((loc[0] - self.bounds.mins[0]) * self.column as Real / self.size[0]).as_()
+            ((loc[0] - self.bounds.mins[0]) * self.width as Real / self.size[0]).as_()
         };
-        let r = if loc[1] <= self.bounds.mins[1] {
+        let y = if loc[1] <= self.bounds.mins[1] {
             0
         } else if loc[1] >= self.bounds.maxs[1] {
-            self.row - 1
+            self.height - 1
         } else {
-            ((loc[1] - self.bounds.mins[1]) * self.row as Real / self.size[1]).as_()
+            ((loc[1] - self.bounds.mins[1]) * self.height as Real / self.size[1]).as_()
         };
-        (r, c)
+        (x, y)
     }
-    /// 获得指定行列瓦片的tile_index
-    pub fn tile_index(&self, row: usize, column: usize) -> usize {
-        row * self.column + column
+    /// 获得指定坐标瓦片的tile_index
+    pub fn tile_index(&self, x: usize, y: usize) -> usize {
+        y * self.width + x
     }
-    /// 获得指定位置瓦片的行列
-    pub fn tile_row_column(&self, tile_index: usize) -> (usize, usize) {
-        (tile_index / self.column, tile_index % self.column)
+    /// 获得指定位置瓦片的坐标
+    pub fn tile_xy(&self, tile_index: usize) -> (usize, usize) {
+        (tile_index % self.width, tile_index / self.width)
     }
 }
 
@@ -189,17 +73,17 @@ impl<K: Key, T> TileMap<K, T> {
     ///
     /// 新建一个瓦片图
     ///
-    /// 需传入根节点（即全场景），指定瓦片图的行数和列数
-    pub fn new(bounds: Aabb, row: usize, column: usize) -> Self {
-        let len = row * column;
-        let mut tiles = Vec::with_capacity(len);
-        tiles.resize_with(len, Default::default);
+    /// 需传入根节点（即全场景），指定瓦片图的宽度和高度
+    pub fn new(bounds: Aabb, width: usize, height: usize) -> Self {
+        let amount = width * height;
+        let mut tiles = Vec::with_capacity(amount);
+        tiles.resize_with(amount, Default::default);
         let size = bounds.extents();
         let info = MapInfo {
             bounds,
-            row,
-            column,
-            count: row * column,
+            height,
+            width,
+            amount,
             size,
         };
         TileMap {
@@ -211,8 +95,8 @@ impl<K: Key, T> TileMap<K, T> {
 
     /// 获得指定位置的瓦片，超出地图边界则返回最近的边界瓦片
     pub fn get_tile_index(&self, loc: Point2<Real>) -> usize {
-        let (r, c) = self.info.calc_tile_index(loc);
-        self.info.tile_index(r, c)
+        let (x, y) = self.info.calc_tile_index(loc);
+        self.info.tile_index(x, y)
     }
     /// 获得指定位置瓦片的节点数量和节点迭代器
     pub fn get_tile_iter<'a>(&'a self, tile_index: usize) -> (usize, Iter<'a, K, T>) {
@@ -229,18 +113,18 @@ impl<K: Key, T> TileMap<K, T> {
     /// 获得指定范围的tile数量和迭代器
     pub fn query_iter(&self, aabb: &Aabb) -> (usize, QueryIter) {
         // 获得min所在瓦片
-        let (row_start, column_start) = self.info.calc_tile_index(aabb.mins);
+        let (x_start, y_start) = self.info.calc_tile_index(aabb.mins);
         // 获得max所在瓦片
-        let (row_end, column_end) = self.info.calc_tile_index(aabb.maxs);
+        let (x_end, y_end) = self.info.calc_tile_index(aabb.maxs);
         (
-            (column_end - column_start + 1) * (row_end - row_start + 1),
+            (x_end - x_start + 1) * (y_end - y_start + 1),
             QueryIter {
-                column: self.info.column,
-                column_start,
-                column_end,
-                row_start,
-                row_end,
-                cur_column: column_start,
+                width: self.info.width,
+                x_start,
+                x_end,
+                y_start,
+                y_end,
+                cur_x: x_start,
             },
         )
     }
@@ -304,15 +188,15 @@ impl<K: Key, T> TileMap<K, T> {
             _ => return false,
         };
         // 获得所在瓦片的位置
-        let (new_r, new_c) = self.info.calc_tile_index(aabb.center());
+        let (new_x, new_y) = self.info.calc_tile_index(aabb.center());
         // 获得原来所在瓦片的位置
-        let (r, c) = self.info.calc_tile_index(node.value.0.center());
+        let (x, y) = self.info.calc_tile_index(node.value.0.center());
         node.value.0 = aabb;
-        if new_r == r && new_c == c {
+        if new_x == x && new_y == y {
             return true;
         }
-        let tile_index = self.info.tile_index(r, c);
-        let new_tile_index = self.info.tile_index(new_r, new_c);
+        let tile_index = self.info.tile_index(x, y);
+        let new_tile_index = self.info.tile_index(new_x, new_y);
         let prev = node.prev;
         let next = node.next;
         node.prev = K::null();
@@ -331,15 +215,15 @@ impl<K: Key, T> TileMap<K, T> {
         // 新aabb
         let aabb = Aabb::new(node.value.0.mins + distance, node.value.0.maxs + distance);
         // 获得新的所在瓦片
-        let (new_r, new_c) = self.info.calc_tile_index(aabb.center());
+        let (new_x, new_y) = self.info.calc_tile_index(aabb.center());
         // 获得原来所在瓦片
-        let (r, c) = self.info.calc_tile_index(node.value.0.center());
-        if c == new_c && r == new_r {
+        let (x, y) = self.info.calc_tile_index(node.value.0.center());
+        if x == new_x && y == new_y {
             node.value.0 = aabb;
             return true;
         }
-        let new_tile_index = self.info.tile_index(new_r, new_c);
-        let tile_index = self.info.tile_index(r, c);
+        let new_tile_index = self.info.tile_index(new_x, new_y);
+        let tile_index = self.info.tile_index(x, y);
         node.value.0 = aabb;
         let prev = node.prev;
         let next = node.next;
@@ -376,8 +260,8 @@ impl<K: Key, T> TileMap<K, T> {
             _ => return Null::null(),
         };
         // 获得新的所在瓦片
-        let (r, c) = self.info.calc_tile_index(node.value.0.center());
-        self.info.tile_index(r, c)
+        let (x, y) = self.info.calc_tile_index(node.value.0.center());
+        self.info.tile_index(x, y)
     }
     /// 获得节点数量
     pub fn len(&self) -> usize {
@@ -460,27 +344,27 @@ impl<'a, K: Key, T> Iterator for Iter<'a, K, T> {
 }
 #[derive(Debug, Clone, Default)]
 pub struct QueryIter {
-    column: usize,
-    column_start: usize,
-    column_end: usize,
-    row_start: usize,
-    row_end: usize,
-    cur_column: usize,
+    width: usize,
+    x_start: usize,
+    x_end: usize,
+    y_start: usize,
+    y_end: usize,
+    cur_x: usize,
 }
 
 impl Iterator for QueryIter {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.row_start > self.row_end {
+        if self.y_start > self.y_end {
             return None;
         }
-        let index = self.column * self.row_start + self.cur_column;
-        if self.cur_column < self.column_end {
-            self.cur_column += 1;
+        let index = self.y_start * self.width + self.cur_x;
+        if self.cur_x < self.x_end {
+            self.cur_x += 1;
         } else {
-            self.cur_column = self.column_start;
-            self.row_start += 1;
+            self.cur_x = self.x_start;
+            self.y_start += 1;
         }
         Some(index)
     }
@@ -611,11 +495,11 @@ fn test1() {
     println!("query_iter count:{},", len);
     for i in iter {
         println!(
-            "id:{}, r_c: {:?} 4: {:?} 8: {:?}",
+            "id:{}, xy: {:?}",
             i,
-            tree.info.tile_row_column(i),
-            get_4d_neighbors(i, tree.info.column, tree.info.count),
-            get_8d_neighbors(i, tree.info.column, tree.info.count)
+            tree.info.tile_xy(i),
+            //get_4d_neighbors(i, tree.info.column, tree.info.count),
+            //get_8d_neighbors(i, tree.info.column, tree.info.count)
         );
     }
     //assert_eq!(args.result(), [1, 3, 4]);
