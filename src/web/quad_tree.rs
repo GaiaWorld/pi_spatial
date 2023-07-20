@@ -49,9 +49,9 @@ impl QuadTree {
         ))
     }
 
-    pub fn add(&mut self, id: f64, min: &[f32], y: &[f32]) {
+    pub fn add(&mut self, id: f64, min: &[f32], max: &[f32]) {
         let min = Point2::new(min[0], min[1]);
-        let max = Point2::new(y[0], y[1]);
+        let max = Point2::new(max[0], max[1]);
         self.0.add(ID(id), AABB::new(min, max), 1);
     }
 
@@ -59,9 +59,9 @@ impl QuadTree {
         self.0.remove(ID(id));
     }
 
-    pub fn update(&mut self, id: f64, min: &[f32], y: &[f32]) {
+    pub fn update(&mut self, id: f64, min: &[f32], max: &[f32]) {
         let min = Point2::new(min[0], min[1]);
-        let max = Point2::new(y[0], y[1]);
+        let max = Point2::new(max[0], max[1]);
         self.0.update(ID(id), AABB::new(min, max));
     }
 
