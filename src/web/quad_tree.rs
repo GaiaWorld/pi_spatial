@@ -132,7 +132,7 @@ impl QuadTree {
         min_y: f32,
         max_x: f32,
         max_y: f32,
-        result: &mut [u32],
+        result: &mut [f64],
         max_len: u32,
     ) -> f64 {
         let min = Point2::new(min_x, min_y);
@@ -143,7 +143,7 @@ impl QuadTree {
             .query(&AABB::new(min, max), intersects, &mut args, ab_query_func);
 
         for i in 0..args.result.len() {
-            result[i] = args.result[i] as u32;
+            result[i] = args.result[i] as f64;
         }
         args.result.len() as f64
     }
