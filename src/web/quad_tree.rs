@@ -63,21 +63,24 @@ impl QuadTree {
      * max_loose_x & max_loose_y: 场景物体最大尺寸
      */
     pub fn new(
-        min_x: f32,
-        min_y: f32,
-        max_x: f32,
-        max_y: f32,
-        min_loose_x: f32,
-        min_loose_y: f32,
-        max_loose_x: f32,
-        max_loose_y: f32,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        min_loose_x: f64,
+        min_loose_y: f64,
+        max_loose_x: f64,
+        max_loose_y: f64,
     ) -> Self {
-        let max = nalgebra::Vector2::new(max_loose_x, max_loose_y);
-        let min = nalgebra::Vector2::new(min_loose_x, min_loose_y);
+        let max = nalgebra::Vector2::new(max_loose_x as f32, max_loose_y as f32);
+        let min = nalgebra::Vector2::new(min_loose_x as f32, min_loose_y as f32);
 
         Self(
             QuadTreeInner::new(
-                AABB::new(Point2::new(min_x, min_y), Point2::new(max_x, max_y)),
+                AABB::new(
+                    Point2::new(min_x as f32, min_y as f32),
+                    Point2::new(max_x as f32, max_y as f32),
+                ),
                 max,
                 min,
                 0,
@@ -88,9 +91,9 @@ impl QuadTree {
         )
     }
 
-    pub fn add(&mut self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> f64 {
-        let min = Point2::new(min_x, min_y);
-        let max = Point2::new(max_x, max_y);
+    pub fn add(&mut self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> f64 {
+        let min = Point2::new(min_x as f32, min_y as f32);
+        let max = Point2::new(max_x as f32, max_y as f32);
         let id = self.1.insert(());
         let res = id.data().as_ffi() as f64;
         self.0.add(id, AABB::new(min, max), 1);
@@ -102,18 +105,18 @@ impl QuadTree {
             .remove(DefaultKey::from(KeyData::from_ffi(id as u64)));
     }
 
-    pub fn update(&mut self, id: f64, min_x: f32, min_y: f32, max_x: f32, max_y: f32) {
-        let min = Point2::new(min_x, min_y);
-        let max = Point2::new(max_x, max_y);
+    pub fn update(&mut self, id: f64, min_x: f64, min_y: f64, max_x: f64, max_y: f64) {
+        let min = Point2::new(min_x as f32, min_y as f32);
+        let max = Point2::new(max_x as f32, max_y as f32);
         self.0.update(
             DefaultKey::from(KeyData::from_ffi(id as u64)),
             AABB::new(min, max),
         );
     }
 
-    pub fn query(&self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Vec<f64> {
-        let min = Point2::new(min_x, min_y);
-        let max = Point2::new(max_x, max_y);
+    pub fn query(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<f64> {
+        let min = Point2::new(min_x as f32, min_y as f32);
+        let max = Point2::new(max_x as f32, max_y as f32);
         let ab = AABB::new(min, max);
         let mut args = AbQueryArgs::new(ab, usize::MAX);
         self.0
@@ -128,15 +131,15 @@ impl QuadTree {
 
     pub fn query_max(
         &self,
-        min_x: f32,
-        min_y: f32,
-        max_x: f32,
-        max_y: f32,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
         result: &mut [f64],
         max_len: u32,
     ) -> f64 {
-        let min = Point2::new(min_x, min_y);
-        let max = Point2::new(max_x, max_y);
+        let min = Point2::new(min_x as f32, min_y as f32);
+        let max = Point2::new(max_x as f32, max_y as f32);
         let ab = AABB::new(min, max);
         let mut args = AbQueryArgs::new(ab, max_len as usize);
         self.0
