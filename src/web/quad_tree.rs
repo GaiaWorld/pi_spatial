@@ -34,7 +34,7 @@ pub fn ab_query_func(arg: &mut AbQueryArgs, id: DefaultKey, aabb: &AABB, bind: &
 #[wasm_bindgen]
 pub struct QuadTree(QuadTreeInner<DefaultKey, i32>, SlotMap<DefaultKey, ()>);
 
-// #[wasm_bindgen]
+#[wasm_bindgen]
 impl QuadTree {
     pub fn default() -> Self {
         let max = nalgebra::Vector2::new(100f32, 100f32);
