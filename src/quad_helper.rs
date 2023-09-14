@@ -247,6 +247,7 @@ fn test1() {
         0,
     );
 	let mut slot_map = SlotMap::new();
+    
 	let mut keys = Vec::new();
 	keys.push(DefaultKey::null());
     for i in 0..1 {
@@ -257,70 +258,70 @@ fn test1() {
             i + 1,
         );
     }
-    for i in 1..tree.ab_map.len() + 1 {
-        println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
-    }
-    tree.update(
-        keys[1],
-        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
-    );
-    for i in 1..tree.ab_map.len() + 1 {
-        println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
-    }
-    tree.collect();
-    for i in 1..tree.ab_map.len() + 1 {
-        println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
-    }
-    for i in 1..6 {
-		keys.push(slot_map.insert(()));
-        tree.add(
-            keys.last().unwrap().clone(),
-            Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
-            i + 3,
-        );
-    }
-    for i in 1..tree.ab_map.len() + 1 {
-        println!("00001, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
-    }
-    tree.update(
-        keys[2],
-        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
-    );
-    tree.update(
-        keys[3],
-        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
-    );
+    // for i in 1..tree.ab_map.len() + 1 {
+    //     println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
+    // }
+    // tree.update(
+    //     keys[1],
+    //     Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+    // );
+    // for i in 1..tree.ab_map.len() + 1 {
+    //     println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
+    // }
+    // tree.collect();
+    // for i in 1..tree.ab_map.len() + 1 {
+    //     println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
+    // }
+    // for i in 1..6 {
+	// 	keys.push(slot_map.insert(()));
+    //     tree.add(
+    //         keys.last().unwrap().clone(),
+    //         Aabb::new(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+    //         i + 3,
+    //     );
+    // }
+    // for i in 1..tree.ab_map.len() + 1 {
+    //     println!("00001, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
+    // }
+    // tree.update(
+    //     keys[2],
+    //     Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+    // );
+    // tree.update(
+    //     keys[3],
+    //     Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+    // );
 
-    tree.update(
-        keys[4],
-        Aabb::new(
-            Point2::new(0.0, 700.0),
-            Point2::new(1000.0, 1400.0),
-        ),
-    );
+    // tree.update(
+    //     keys[4],
+    //     Aabb::new(
+    //         Point2::new(0.0, 700.0),
+    //         Point2::new(1000.0, 1400.0),
+    //     ),
+    // );
 
-    tree.update(
-        keys[5],
-        Aabb::new(
-            Point2::new(0.0, 1400.0),
-            Point2::new(1000.0, 1470.0),
-        ),
-    );
-    tree.update(
-        keys[6],
-        Aabb::new(
-            Point2::new(0.0, 1470.0),
-            Point2::new(1000.0, 1540.0),
-        ),
-    );
-    tree.update(
-        keys[1],
-        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
-    );
-    tree.collect();
-    for i in 1..tree.ab_map.len() + 1 {
-        println!("00002, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
-    }
+    // tree.update(
+    //     keys[5],
+    //     Aabb::new(
+    //         Point2::new(0.0, 1400.0),
+    //         Point2::new(1000.0, 1470.0),
+    //     ),
+    // );
+    // tree.update(
+    //     keys[6],
+    //     Aabb::new(
+    //         Point2::new(0.0, 1470.0),
+    //         Point2::new(1000.0, 1540.0),
+    //     ),
+    // );
+    // tree.update(
+    //     keys[1],
+    //     Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+    // );
+    // tree.collect();
+    // for i in 1..tree.ab_map.len() + 1 {
+    //     println!("00002, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
+    // }
     //   tree.update(1, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
     //   tree.update(2, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
     //   tree.update(3, Aabb::new(Point2::new(0.0,0.0,0.0), Point2::new(1000.0, 800.0, 1.0)));
@@ -334,17 +335,17 @@ fn test1() {
     //   println!("22222, id:{}, ab: {:?}", i, tree.ab_map.get(i).unwrap());
     //  }
     // tree.collect();
-    for i in 1..tree.slab.len() + 1 {
-        println!(
-            "000000 000000, id:{}, quad: {:?}",
-            i,
-            tree.slab.get(keys[i]).unwrap()
-        );
-    }
-    println!("outer:{:?}", tree.outer);
+    // for i in 1..tree.slab.len() + 1 {
+    //     println!(
+    //         "000000 000000, id:{}, quad: {:?}",
+    //         i,
+    //         tree.slab.get(keys[i]).unwrap()
+    //     );
+    // }
+    // println!("outer:{:?}", tree.outer);
     let aabb = Aabb::new(
-        Point2::new(500f32, 500f32),
-        Point2::new(500f32, 500f32),
+        Point2::new(1f32, 1f32),
+        Point2::new(1f32, 1f32),
     );
     let mut args: AbQueryArgs<DefaultKey, usize> = AbQueryArgs::new(aabb.clone(), 0);
     tree.query(&aabb, intersects, &mut args, ab_query_func);
