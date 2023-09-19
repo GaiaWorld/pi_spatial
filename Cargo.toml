@@ -1,6 +1,6 @@
 [package]
 name = "pi_spatial"
-version = "0.5.3"
+version = "0.5.4"
 authors = ["yineng <dev@dev.com>"]
 edition = "2021"
 description = "sparial octtree quadtree"

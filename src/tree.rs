@@ -692,6 +692,12 @@ fn update<K: Key, H: Helper<N>, T, const N: usize>(
             let next = node.next;
             node.prev = K::null();
             node.parent_child = N;
+
+			if node.layer == root.layer {
+				// 原本就在root上，不需要下沉
+				return None;
+			}
+
             if H::aabb_contains(&root.aabb, &node.value.0) {
                 set_tree_dirty(dirty, down(slab, adjust.1, deep, root_key, node, id));
             } else {
@@ -1044,6 +1050,9 @@ fn query<K: Key, H: Helper<N>, T, A, B, const N: usize>(
     while !id.is_null() {
         let ab = unsafe { ab_map.get_unchecked(id) };
         ab_func(ab_arg, id, &ab.value.0, &ab.value.1);
+		if id == ab.next {
+			panic!("query1======{:?}", id)
+		}
         id = ab.next;
     }
     let childs = H::make_childs(&node.aabb, &node.loose);
@@ -1052,6 +1061,10 @@ fn query<K: Key, H: Helper<N>, T, A, B, const N: usize>(
         match node.childs[i] {
             ChildNode::Branch(branch, ref num) if *num > 0 => {
                 if branch_func(branch_arg, &ab) {
+					let node = unsafe { branch_slab.get_unchecked(branch) };
+					if id == node.nodes.head {
+						panic!("query2======{:?}", id)
+					}
                     query(
                         branch_slab,
                         ab_map,
@@ -1069,6 +1082,9 @@ fn query<K: Key, H: Helper<N>, T, A, B, const N: usize>(
                     loop {
                         let ab = unsafe { ab_map.get_unchecked(id) };
                         ab_func(ab_arg, id, &ab.value.0, &ab.value.1);
+						if id == ab.next {
+							panic!("query3======{:?}", id)
+						}
                         id = ab.next;
                         if id.is_null() {
                             break;
