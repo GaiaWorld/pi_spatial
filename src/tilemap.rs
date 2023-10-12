@@ -8,8 +8,11 @@ use nalgebra::*;
 use num_traits::cast::AsPrimitive;
 use parry2d::bounding_volume::*;
 use parry2d::math::Real;
+use pi_link_list::{Iter, LinkList, Node};
 use pi_null::*;
 use pi_slotmap::*;
+
+type List<K, T> = LinkList<K, T, SecondaryMap<K, Node<K, T>>>;
 
 pub struct MapInfo {
     // 场景的范围
@@ -62,9 +65,9 @@ impl MapInfo {
 ///
 pub struct TileMap<K: Key, T> {
     //所有存储aabb的节点
-    ab_map: SecondaryMap<K, AbNode<K, Aabb, T>>,
+    ab_map: SecondaryMap<K, Node<K, (Aabb, T)>>,
     // 该图所有瓦片
-    tiles: Vec<NodeList<K>>,
+    tiles: Vec<List<K, (Aabb, T)>>,
     // 场景的范围
     pub info: MapInfo,
 }
@@ -99,16 +102,15 @@ impl<K: Key, T> TileMap<K, T> {
         self.info.tile_index(x, y)
     }
     /// 获得指定位置瓦片的节点数量和节点迭代器
-    pub fn get_tile_iter<'a>(&'a self, tile_index: usize) -> (usize, Iter<'a, K, T>) {
-        let tile = &self.tiles[tile_index];
-        let id = tile.head;
-        (
-            tile.len,
-            Iter {
-                next: id,
-                container: &self.ab_map,
-            },
-        )
+    pub fn get_tile_iter<'a>(
+        &'a self,
+        tile_index: usize,
+    ) -> (
+        usize,
+        Iter<'a, K, (Aabb, T), SecondaryMap<K, Node<K, (Aabb, T)>>>,
+    ) {
+        let list = &self.tiles[tile_index];
+        (list.len(), list.iter(&self.ab_map))
     }
     /// 获得指定范围的tile数量和迭代器
     pub fn query_iter(&self, aabb: &Aabb) -> (usize, QueryIter) {
@@ -137,35 +139,34 @@ impl<K: Key, T> TileMap<K, T> {
         if tile_index.is_null() {
             return false;
         }
-        let next = self.tiles[tile_index].head;
-        match self.ab_map.insert(id, AbNode::new(aabb, bind, next)) {
+        match self.ab_map.insert(id, Node::new((aabb, bind))) {
             Some(_) => return false,
             None => (),
         }
-        self.tiles[tile_index].add(&mut self.ab_map, id);
+        self.tiles[tile_index].link_before(id, K::null(), &mut self.ab_map);
         true
     }
     /// 获取所有id的aabb及其绑定的迭代器
-    pub fn iter(&self) -> pi_slotmap::secondary::Iter<K, AbNode<K, Aabb, T>> {
+    pub fn iter(&self) -> pi_slotmap::secondary::Iter<K, Node<K, (Aabb, T)>> {
         self.ab_map.iter()
     }
     /// 获取指定id的aabb及其绑定
     pub fn get(&self, id: K) -> Option<&(Aabb, T)> {
         match self.ab_map.get(id) {
-            Some(node) => Some(&node.value),
+            Some(node) => Some(&node),
             None => None,
         }
     }
 
     /// 获取指定id的aabb及其绑定
     pub unsafe fn get_unchecked(&self, id: K) -> &(Aabb, T) {
-        &self.ab_map.get_unchecked(id).value
+        &self.ab_map.get_unchecked(id)
     }
 
     /// 获取指定id的可写绑定
     pub unsafe fn get_mut(&mut self, id: K) -> Option<&mut T> {
         match self.ab_map.get_mut(id) {
-            Some(n) => Some(&mut n.value.1),
+            Some(n) => Some(&mut n.1),
             None => None,
         }
     }
@@ -173,7 +174,7 @@ impl<K: Key, T> TileMap<K, T> {
     /// 获取指定id的可写绑定
     pub unsafe fn get_unchecked_mut(&mut self, id: K) -> &mut T {
         let node = self.ab_map.get_unchecked_mut(id);
-        &mut node.value.1
+        &mut node.1
     }
 
     /// 检查是否包含某个key
@@ -190,19 +191,9 @@ impl<K: Key, T> TileMap<K, T> {
         // 获得所在瓦片的位置
         let (new_x, new_y) = self.info.calc_tile_index(aabb.center());
         // 获得原来所在瓦片的位置
-        let (x, y) = self.info.calc_tile_index(node.value.0.center());
-        node.value.0 = aabb;
-        if new_x == x && new_y == y {
-            return true;
-        }
-        let tile_index = self.info.tile_index(x, y);
-        let new_tile_index = self.info.tile_index(new_x, new_y);
-        let prev = node.prev;
-        let next = node.next;
-        node.prev = K::null();
-        node.next = self.tiles[new_tile_index].head;
-        self.tiles[tile_index].remove(&mut self.ab_map, prev, next);
-        self.tiles[new_tile_index].add(&mut self.ab_map, id);
+        let (x, y) = self.info.calc_tile_index(node.0.center());
+        node.0 = aabb;
+        self.move_to(id, x, y, new_x, new_y);
         true
     }
 
@@ -213,31 +204,29 @@ impl<K: Key, T> TileMap<K, T> {
             _ => return false,
         };
         // 新aabb
-        let aabb = Aabb::new(node.value.0.mins + distance, node.value.0.maxs + distance);
+        let aabb = Aabb::new(node.0.mins + distance, node.0.maxs + distance);
         // 获得新的所在瓦片
         let (new_x, new_y) = self.info.calc_tile_index(aabb.center());
         // 获得原来所在瓦片
-        let (x, y) = self.info.calc_tile_index(node.value.0.center());
+        let (x, y) = self.info.calc_tile_index(node.0.center());
+        node.0 = aabb;
+        self.move_to(id, x, y, new_x, new_y);
+        true
+    }
+    fn move_to(&mut self, id: K, x: usize, y: usize, new_x: usize, new_y: usize) {
         if x == new_x && y == new_y {
-            node.value.0 = aabb;
-            return true;
+            return;
         }
         let new_tile_index = self.info.tile_index(new_x, new_y);
         let tile_index = self.info.tile_index(x, y);
-        node.value.0 = aabb;
-        let prev = node.prev;
-        let next = node.next;
-        node.prev = K::null();
-        self.tiles[tile_index].remove(&mut self.ab_map, prev, next);
-        self.tiles[new_tile_index].add(&mut self.ab_map, id);
-        true
+        self.tiles[tile_index].unlink(id, &mut self.ab_map);
+        self.tiles[new_tile_index].link_before(id, K::null(), &mut self.ab_map);
     }
-
     /// 更新指定id的绑定
     pub fn update_bind(&mut self, id: K, bind: T) -> bool {
         match self.ab_map.get_mut(id) {
             Some(node) => {
-                node.value.1 = bind;
+                node.1 = bind;
                 true
             }
             _ => false,
@@ -245,13 +234,13 @@ impl<K: Key, T> TileMap<K, T> {
     }
     /// 移除指定id的aabb及其绑定
     pub fn remove(&mut self, id: K) -> Option<(Aabb, T)> {
-        let node = match self.ab_map.remove(id) {
+        let node = match self.ab_map.get(id) {
             Some(n) => n,
             _ => return None,
         };
-        let tile_index = self.get_tile_index(node.value.0.center());
-        self.tiles[tile_index].remove(&mut self.ab_map, node.prev, node.next);
-        Some((node.value.0, node.value.1))
+        let tile_index = self.get_tile_index(node.0.center());
+        self.tiles[tile_index].unlink(id, &mut self.ab_map);
+        self.ab_map.remove(id).map(|n| n.take())
     }
     /// 获得指定id的所在的tile
     pub fn get_tile_index_by_id(&self, id: K) -> usize {
@@ -260,7 +249,7 @@ impl<K: Key, T> TileMap<K, T> {
             _ => return Null::null(),
         };
         // 获得新的所在瓦片
-        let (x, y) = self.info.calc_tile_index(node.value.0.center());
+        let (x, y) = self.info.calc_tile_index(node.0.center());
         self.info.tile_index(x, y)
     }
     /// 获得节点数量
@@ -269,79 +258,6 @@ impl<K: Key, T> TileMap<K, T> {
     }
 }
 
-//////////////////////////////////////////////////////本地/////////////////////////////////////////////////////////////////
-
-#[derive(Debug, Clone, Copy, Default)]
-struct NodeList<K> {
-    head: K,
-    len: usize,
-}
-impl<K: Key> NodeList<K> {
-    #[inline]
-    pub fn add<Aabb, T>(&mut self, map: &mut SecondaryMap<K, AbNode<K, Aabb, T>>, id: K) {
-        if !self.head.is_null() {
-            let n = unsafe { map.get_unchecked_mut(self.head) };
-            n.prev = id;
-        }
-        self.head = id;
-        self.len += 1;
-    }
-    #[inline]
-    pub fn remove<Aabb, T>(
-        &mut self,
-        map: &mut SecondaryMap<K, AbNode<K, Aabb, T>>,
-        prev: K,
-        next: K,
-    ) {
-        if !prev.is_null() {
-            let node = unsafe { map.get_unchecked_mut(prev) };
-            node.next = next;
-        } else {
-            self.head = next;
-        }
-        if !next.is_null() {
-            let node = unsafe { map.get_unchecked_mut(next) };
-            node.prev = prev;
-        }
-        self.len -= 1;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AbNode<K: Key, Aabb, T> {
-    pub value: (Aabb, T), // 包围盒
-    prev: K,              // 前ab节点
-    next: K,              // 后ab节点
-}
-impl<K: Key, Aabb, T> AbNode<K, Aabb, T> {
-    pub fn new(aabb: Aabb, bind: T, next: K) -> Self {
-        AbNode {
-            value: (aabb, bind),
-            prev: K::null(),
-            next,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Iter<'a, K: Key, T> {
-    next: K,
-    container: &'a SecondaryMap<K, AbNode<K, Aabb, T>>,
-}
-
-impl<'a, K: Key, T> Iterator for Iter<'a, K, T> {
-    type Item = (K, &'a Aabb, &'a T);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.next.is_null() {
-            return None;
-        }
-        let node = unsafe { self.container.get_unchecked(self.next) };
-        let id = self.next;
-        self.next = node.next;
-        Some((id, &node.value.0, &node.value.1))
-    }
-}
 #[derive(Debug, Clone, Default)]
 pub struct QueryIter {
     width: usize,
