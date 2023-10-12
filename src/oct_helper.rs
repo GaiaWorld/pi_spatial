@@ -113,8 +113,8 @@ impl Helper<8> for OctHelper {
 
     #[inline]
     /// 判断所在的子节点
-    fn get_child(point: &Point3<Real>, aabb: &Aabb) -> usize {
-        let mut i: usize = 0;
+    fn get_child(point: &Point3<Real>, aabb: &Aabb) -> u8 {
+        let mut i = 0;
         if aabb.maxs.x > point.x {
             i += 1;
         }
@@ -181,7 +181,7 @@ impl Helper<8> for OctHelper {
         layer: usize,
         loose_layer: usize,
         min_loose: &Vector3<Real>,
-        index: usize,
+        index: u8,
     ) -> (Aabb, Vector3<Real>) {
         let two = Real::one() + Real::one();
         macro_rules! c1 {

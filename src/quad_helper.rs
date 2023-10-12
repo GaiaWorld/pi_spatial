@@ -105,8 +105,8 @@ impl Helper<4> for QuadHelper {
 
     #[inline]
     /// 判断所在的子节点
-    fn get_child(point: &Point2<Real>, aabb: &Aabb) -> usize {
-        let mut i: usize = 0;
+    fn get_child(point: &Point2<Real>, aabb: &Aabb) -> u8 {
+        let mut i = 0;
         if aabb.maxs.x > point.x {
             i += 1;
         }
@@ -152,7 +152,7 @@ impl Helper<4> for QuadHelper {
         layer: usize,
         loose_layer: usize,
         min_loose: &Vector2<Real>,
-        index: usize,
+        index: u8,
     ) -> (Aabb, Vector2<Real>) {
         let two = Real::one() + Real::one();
         macro_rules! c1 {
@@ -231,14 +231,14 @@ pub fn ab_query_func<K: Key, T: Clone + PartialOrd + fmt::Debug>(
 #[test]
 fn test1() {
 	use pi_slotmap::{SlotMap, DefaultKey};
+    use pi_null::Null;
 
-    println!("test1-----------------------------------------");
-    let max = Vector2::new(100f32, 100f32);
-    let min = max / 100f32;
+    let max = Vector2::new(1024f32, 1024f32);
+    let min = Vector2::new(10f32, 10f32);
     let mut tree = QuadTree::new(
         Aabb::new(
             Point2::new(-1024f32, -1024f32),
-            Point2::new(3072f32, 3072f32),
+            Point2::new(4096f32, 4096f32),
         ),
         max,
         min,
@@ -249,8 +249,7 @@ fn test1() {
 	let mut slot_map = SlotMap::new();
     
 	let mut keys = Vec::new();
-	keys.push(DefaultKey::null());
-    for i in 0..1 {
+    for i in 0..10 {
 		keys.push(slot_map.insert(()));
         tree.add(
             keys.last().unwrap().clone(),
@@ -258,16 +257,23 @@ fn test1() {
             i + 1,
         );
     }
-    // for i in 1..tree.ab_map.len() + 1 {
-    //     println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
-    // }
-    // tree.update(
-    //     keys[1],
-    //     Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
-    // );
-    // for i in 1..tree.ab_map.len() + 1 {
-    //     println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
-    // }
+    tree.collect();
+    for i in 0..8 {
+        tree.remove(keys.pop().unwrap());
+    }
+    tree.collect();
+    println!("len:{}", tree.len());
+    println!("keys:{:?}", &keys);
+    for i in &keys {
+        println!("id:{:?}, ab: {:?}", i, tree.ab_map.get(*i).unwrap());
+    }
+    tree.update(
+        keys[1],
+        Aabb::new(Point2::new(0.0, 0.0), Point2::new(1000.0, 700.0)),
+    );
+    for i in &keys {
+        println!("id:{:?}, ab: {:?}", i, tree.ab_map.get(*i).unwrap());
+    }
     // tree.collect();
     // for i in 1..tree.ab_map.len() + 1 {
     //     println!("00000, id:{}, ab: {:?}", i, tree.ab_map.get(keys[i]).unwrap());
@@ -1104,74 +1110,64 @@ fn test1() {
 // //     }
 // // }
 
-// #[test]
-// fn test_update() {
-//     use pcg_rand::Pcg32;
-//     use rand::{Rng, SeedableRng};
+#[test]
+fn test_update() {
+	use pi_slotmap::{SlotMap, DefaultKey};
+    use pi_null::Null;
+    use pcg_rand::Pcg32;
+    use rand::{Rng, SeedableRng};
+    let max = Vector2::new(1024f32, 1024f32);
+    let min = Vector2::new(10f32, 10f32);
+    let mut tree = QuadTree::new(
+        Aabb::new(
+            Point2::new(-1024f32, -1024f32),
+            Point2::new(4096f32, 4096f32),
+        ),
+        max,
+        min,
+        0,
+        0,
+        0,
+    );
+	let mut slot_map = SlotMap::new();
+    
+	let mut keys = Vec::new();
 
-//     let max_size = 1000.0;
-
-//     let max = Vector2::new(100f32, 100f32);
-//     let min = max / 100f32;
-//     let mut tree = QuadTree::new(
-//         Aabb::new(
-//             Point2::new(0.0, 0.0),
-//             Point2::new(max_size, max_size),
-//         ),
-//         max,
-//         min,
-//         0,
-//         0,
-//         10,
-//     );
-
-//     let mut rng = pcg_rand::Pcg32::seed_from_u64(1111);
-//     //println!("rr = {}", rr);
-//     for i in 0..10000 {
-//         //println!("i = {}", i);
-
-//         let x = rng.gen_range(0.0, max_size);
-//         let y = rng.gen_range(0.0, max_size);
-//         let z = rng.gen_range(0.0, max_size);
-
-//         tree.add(
-//             i + 1,
-//             Aabb::new(Point2::new(x, y), Point2::new(x, y)),
-//             i + 1,
-//         );
-
-//         tree.collect();
-
-//         let x_: f32 = rng.gen_range(0.0, max_size);
-//         let y_: f32 = rng.gen_range(0.0, max_size);
-
-//         // TODO: 改成 7.0 就可以了。
-//         let size: f32 = 1.0;
-//         let aabb = Aabb::new(
-//             Point2::new(x_, y_),
-//             Point2::new(x_ + size, y_ + size),
-//         );
-
-//         tree.update(i + 1, aabb.clone());
-//         //tree.remove(i + 1);
-//         //tree.add(i + 1, aabb.clone(), i + 1);
-//         // if i == 25 {
-//         //     let old = clone_tree(&tree.slab, &tree.ab_map);
-//         //     assert_eq!(check_tree(&tree.slab, &tree.ab_map, old, i), false);
-//         //     log(&tree.slab, &tree.ab_map, i);
-//         // }
-//         tree.collect();
-//         // let aabb = Aabb::new(
-//         //     Point2::new(aabb.min.x - 1.0, aabb.min.y - 1.0, aabb.min.z - 1.0),
-//         //     Point2::new(aabb.min.x + 1.0, aabb.min.y + 1.0, aabb.min.z + 1.0),
-//         // );
-//         // if i == 25 {
-//         //     let old = clone_tree(&tree.slab, &tree.ab_map);
-//         //     assert_eq!(check_tree(&tree.slab, &tree.ab_map, old, i), false);
-//         //     log(&tree.slab, &tree.ab_map,i);
-//         // }
-//         let mut args: AbQueryArgs<f32, usize> = AbQueryArgReal::new(aabb.clone(), 0);
-//         tree.query(&aabb, intersects, &mut args, ab_query_func);
-//         assert!(args.result.0 > 0);
-//     }
-// }
+    let max_size = 1024f32;
+    let mut rng = pcg_rand::Pcg32::seed_from_u64(11111);
+    fn gen_rand_rect(rng: &mut Pcg32) -> Aabb {
+        let x = rng.gen_range(1024f32-500f32..4096f32+500f32);
+        let y = rng.gen_range(-1024f32-500f32..4096f32+500f32);
+        let w = rng.gen_range(0.0..1024f32);
+        let h = rng.gen_range(0.0..1024f32);
+        Aabb::new(Point2::new(x - w/2.0, y - h/2.0), Point2::new(x+w/2.0, y+h/2.0))
+    }
+    for i in 0..20000 {
+		keys.push(slot_map.insert(()));
+        tree.add(
+            keys.last().unwrap().clone(),
+            gen_rand_rect(&mut rng),
+            i + 1,
+        );
+    };
+    for i in 0..1_000_000 {
+        let r = i % 3;
+        if r == 0 {
+            let index = rng.gen_range(0..keys.len());
+            let w = rng.gen_range(0.0..max_size);
+            let h = rng.gen_range(0.0..max_size);
+            tree.shift(keys[index], Vector2::new(w,h));
+        }else if r == 1 {
+            let index = rng.gen_range(0..keys.len());
+            let id = keys.swap_remove(index);
+            tree.remove(id);
+        } else {
+            keys.push(slot_map.insert(()));
+            tree.add(
+                keys.last().unwrap().clone(),
+                gen_rand_rect(&mut rng),
+                i + 1,
+            );
+        }
+    }
+}

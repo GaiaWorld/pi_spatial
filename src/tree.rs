@@ -1,9 +1,33 @@
 //! 高性能的松散叉树
 //! 采用二进制掩码 表达xyz的大小， child&1 == 0 表示x为小，否则为大。
-//! 采用Slab，内部用偏移量来分配八叉节点。这样内存连续，八叉树本身可以快速拷贝。
+//! 采用Slab，内部用偏移量来分配八叉空间。这样内存连续，八叉树本身可以快速拷贝。
 //! 要求插入AABB节点时的id， 应该是可以用在数组索引上的。
+//! 分裂和收缩：
+//!     ChildNode的Branch(BranchKey),
+//!     如果BranchKey对应八叉空间下的节点总数量小于收缩阈值，则可以收缩成ChildNode的Ab(List)
+//!     ChildNode的Ab(List),
+//!     如果List中节点的数量大于分裂阈值，则也可以分裂成Branch(BranchKey)
+//!     收缩阈值一般为4，分裂阈值一般为8。 在这个结构下，不会出现反复分裂和收缩。
+//!     如果一组节点重叠，并且超过6，则会导致会分裂到节点所能到达的最低的层，应用方应该尽量避免这种情况
+//! 更新aabb：
+//!     节点只会在3个位置：
+//!     1. 如果超出或相交边界，则在tree.outer上
+//!        这种情况下，node.parent为null
+//!     2. 如果节点大小下不去，则只能在本层活动，则在BranchNode的nodes
+//!         这种情况下，node.layer==parent.layer. node.parent_child==N
+//!     3. 其余的节点都在ChildNode的Ab(List)中
+//!         node.layer<parent.layer. node.parent_child<N
+//!     更新节点就是在这3个位置上挪动
 
-use pi_slotmap::{Key, SecondaryMap, SlotMap};
+use std::mem;
+
+use pi_link_list::{LinkList, Node};
+use pi_null::Null;
+use pi_slotmap::{new_key_type, Key, SecondaryMap, SlotMap};
+
+new_key_type! {
+    pub struct BranchKey;
+}
 
 pub trait Helper<const N: usize> {
     type Point;
@@ -31,7 +55,7 @@ pub trait Helper<const N: usize> {
     /// 获得指定向量以及最大松散尺寸计算对应的层
     fn calc_layer(loose: &Self::Vector, el: &Self::Vector) -> usize;
     ///  判断所在的子节点
-    fn get_child(point: &Self::Point, aabb: &Self::Aabb) -> usize;
+    fn get_child(point: &Self::Point, aabb: &Self::Aabb) -> u8;
     ///  获得所在的AABB的最大half loose
     fn get_max_half_loose(aabb: &Self::Aabb, loose: &Self::Vector) -> Self::Point;
     ///  获得所在的AABB的最小half loose
@@ -45,13 +69,20 @@ pub trait Helper<const N: usize> {
         layer: usize,
         loose_layer: usize,
         min_loose: &Self::Vector,
-        child_index: usize,
+        child_index: u8,
     ) -> (Self::Aabb, Self::Vector);
 }
 
 const DEEP_MAX: usize = 16;
 const ADJUST_MIN: usize = 4;
-const ADJUST_MAX: usize = 7;
+const ADJUST_MAX: usize = 8;
+const AUTO_COLLECT: usize = 1024;
+
+type List<K, H, T, const N: usize> = LinkList<
+    K,
+    AbNode<<H as Helper<N>>::Aabb, T>,
+    SecondaryMap<K, Node<K, AbNode<<H as Helper<N>>::Aabb, T>>>,
+>;
 ///
 /// 叉树结构体
 ///
@@ -61,22 +92,23 @@ const ADJUST_MAX: usize = 7;
 /// + 实际使用的时候就是浮点数字类型，比如：f32/f64；
 ///
 pub struct Tree<K: Key, H: Helper<N>, T, const N: usize> {
-    pub slab: SlotMap<K, BranchNode<K, H, N>>, //所有分支节点（分支节点中包含该层ab节点列表）
-    pub ab_map: SecondaryMap<K, AbNode<K, H::Aabb, T>>, //所有存储ab碰撞单位的节点
-    max_loose: H::Vector,                      //最大松散值，第一层的松散大小
-    min_loose: H::Vector,                      //最小松散值
-    adjust: (usize, usize),                    //小于min，节点收缩; 大于max，节点分化。默认(4, 7)
-    loose_layer: usize,                        // 最小松散值所在的深度
-    deep: usize,                               // 最大深度, 推荐12-16
-    root_key: K,
-    pub outer: NodeList<K>, // 和根节点不相交的ab节点列表，及节点数量。 相交的放在root的nodes上了。 该AbNode的parent为0
-    pub dirty: (Vec<Vec<K>>, usize, usize), // 脏的BranchNode节点, 及脏节点数量，及脏节点的起始层
+    pub slab: SlotMap<BranchKey, BranchNode<K, H, T, N>>, //所有分支节点（分支节点中包含该层ab节点列表）
+    pub ab_map: SecondaryMap<K, Node<K, AbNode<H::Aabb, T>>>, //所有存储ab碰撞单位的节点
+    max_loose: H::Vector,                                 //最大松散值，第一层的松散大小
+    min_loose: H::Vector,                                 //最小松散值
+    root_key: BranchKey,
+    pub outer: List<K, H, T, N>, // 和根空间不包含（相交或在外）的ab节点列表，及节点数量。 该AbNode的parent为Null
+    pub dirty: (Vec<Vec<BranchKey>>, DirtyState), // 脏的BranchNode节点, 及脏节点状态
+    adjust: (usize, usize), //小于min，节点收缩; 大于max，节点分化。默认(4, 8)
+    loose_layer: usize,     // 最小松散值所在的深度
+    deep: usize,        // 最大深度, 推荐12-16, 最小松散值设置的好，不设置最大深度也是可以的
+    auto_collect: usize, // 自动整理的阈值，默认为1024
 }
 
 impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
     ///构建树
     ///
-    /// 需传入根节点（即全场景）AB碰撞范围；N维实际距离所表示的最大及最小松散参数；叉树收缩及分裂的阈值；叉树的深度限制
+    /// 需传入根空间（即全场景）AB碰撞范围；N维实际距离所表示的最大及最小松散参数；叉树收缩及分裂的阈值；叉树的深度限制
     ///
     /// ### 对`N`的约束
     ///
@@ -102,14 +134,24 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
             adjust_max
         };
         let adjust_max = adjust_min.max(adjust_max);
-        let deep = if deep > DEEP_MAX { DEEP_MAX } else { deep };
-        let mut branch_slab: SlotMap<K, BranchNode<K, H, N>> = SlotMap::with_key();
+        let deep = if deep > DEEP_MAX || deep == 0 {
+            DEEP_MAX
+        } else {
+            deep
+        };
+        let mut branch_slab: SlotMap<BranchKey, BranchNode<K, H, T, N>> = SlotMap::with_key();
         let mut d = H::aabb_extents(&root);
         // 根据最大 最小 松散值 计算出最小松散值所在的最大的层
         let loose_layer = H::calc_layer(&max_loose, &min_loose);
         let deep = H::get_deap(&mut d, loose_layer, &max_loose, deep, &min_loose);
 
-        let root = branch_slab.insert(BranchNode::new(root, max_loose.clone(), K::null(), 0, 0));
+        let root = branch_slab.insert(BranchNode::new(
+            root,
+            max_loose.clone(),
+            0,
+            BranchKey::null(),
+            0,
+        ));
         return Tree {
             slab: branch_slab,
             ab_map: SecondaryMap::default(),
@@ -119,8 +161,16 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
             loose_layer,
             deep,
             root_key: root,
-            outer: NodeList::new(),
-            dirty: (Vec::new(), 0, usize::max_value()),
+            outer: LinkList::new(),
+            dirty: (
+                Vec::new(),
+                DirtyState {
+                    dirty_count: 0,
+                    min_layer: usize::max_value(),
+                    max_layer: 0,
+                },
+            ),
+            auto_collect: AUTO_COLLECT,
         };
     }
 
@@ -131,7 +181,14 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
     //         + self.outer.len() * std::mem::size_of::<usize>()
 
     // }
-
+    /// 获得自动整理的次数
+    pub fn get_auto_collect(&self) -> usize {
+        self.auto_collect
+    }
+    /// 设置自动整理的次数
+    pub fn set_auto_collect(&mut self, auto_collect: usize) {
+        self.auto_collect = auto_collect;
+    }
     /// 获得节点收缩和分化的阈值
     pub fn get_adjust(&self) -> (usize, usize) {
         (self.adjust.0, self.adjust.1)
@@ -149,47 +206,56 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
 
     /// 指定id，在叉树中添加一个aabb单元及其绑定
     pub fn add(&mut self, id: K, aabb: H::Aabb, bind: T) -> bool {
-        let layer = self.get_layer(&aabb);
-        match self.ab_map.insert(id, AbNode::new(aabb, bind, layer, N)) {
-            Some(_) => return false,
-            _ => (),
+        if self.ab_map.contains_key(id) {
+            return false;
         }
-        let next = {
-            let node = unsafe { self.ab_map.get_unchecked_mut(id) };
-            let root = unsafe { self.slab.get_unchecked_mut(self.root_key) };
-            if H::aabb_contains(&root.aabb, &node.value.0) {
-                // root的ab内
-                set_tree_dirty(
-                    &mut self.dirty,
-                    down(
-                        &mut self.slab,
-                        self.adjust.1,
-                        self.deep,
-                        self.root_key,
-                        node,
-                        id,
-                    ),
-                );
-            } else if H::aabb_intersects(&root.aabb, &node.value.0) {
-                // 相交的放在root的nodes上
-                node.parent = self.root_key;
-                node.next = root.nodes.head;
-                root.nodes.push(id);
-            } else {
-                // 和根节点不相交的ab节点, 该AbNode的parent为0
-                node.next = self.outer.head;
-                self.outer.push(id);
-            }
-            node.next
-        };
-
-        if !next.is_null() {
-            let n = unsafe { self.ab_map.get_unchecked_mut(next) };
-            n.prev = id;
+        let layer = self.get_layer(&aabb);
+        self.ab_map.insert(
+            id,
+            Node::new(AbNode::new(aabb.clone(), bind, layer, N as u8)),
+        );
+        let root = unsafe { self.slab.get_unchecked_mut(self.root_key) };
+        if H::aabb_contains(&root.aabb, &aabb) {
+            // root的ab内
+            self.down(self.root_key, &aabb, layer, id);
+        } else {
+            // 和根空间相交或在其外的ab节点, 该AbNode的parent为0
+            self.outer.link_before(id, K::null(), &mut self.ab_map);
         }
         true
     }
 
+    /// ab节点下降
+    /// ChildNode的Branch(BranchKey, usize), 记录了该八叉空间下的节点总数量
+    /// 如果小于阈值，则可以转化成ChildNode的Ab(List)
+    /// ChildNode的Ab(List)如果大于阈值，则也可以转化成Branch(BranchKey, usize)
+    fn down(&mut self, branch_id: BranchKey, aabb: &H::Aabb, layer: usize, id: K) {
+        let parent = unsafe { self.slab.get_unchecked_mut(branch_id) };
+        let child = if parent.layer as usize >= layer {
+            parent.nodes.link_before(id, K::null(), &mut self.ab_map);
+            N as u8
+        } else {
+            let i = H::get_child(&H::get_max_half_loose(&parent.aabb, &parent.loose), aabb);
+            match parent.childs[i as usize] {
+                ChildNode::Branch(branch) => {
+                    return self.down(branch, aabb, layer, id);
+                }
+                ChildNode::Ab(ref mut list) => {
+                    list.link_before(id, K::null(), &mut self.ab_map);
+                    if list.len() >= self.adjust.1 && parent.layer < self.deep {
+                        set_dirty(&mut parent.dirty, parent.layer, branch_id, &mut self.dirty);
+                    }
+                }
+            }
+            i
+        };
+        let node = unsafe { self.ab_map.get_unchecked_mut(id) };
+        node.parent = branch_id;
+        node.parent_child = child;
+        if self.dirty.1.dirty_count >= self.auto_collect {
+            self.collect();
+        }
+    }
     /// 获取指定id的aabb及其绑定
     /// + 该接口返回Option
     pub fn get(&self, id: K) -> Option<&(H::Aabb, T)> {
@@ -226,47 +292,147 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
     /// 更新指定id的aabb
     pub fn update(&mut self, id: K, aabb: H::Aabb) -> bool {
         let layer = self.get_layer(&aabb);
-        let r = match self.ab_map.get_mut(id) {
-            Some(node) => {
-                node.layer = layer;
-                node.value.0 = aabb;
-                update(
-                    &mut self.slab,
-                    &self.adjust,
-                    self.deep,
-                    &mut self.outer,
-                    &mut self.dirty,
-                    id,
-                    node,
-                    self.root_key,
-                )
-            }
-            _ => return false,
-        };
-        remove_add(self, id, r);
-        true
+        if let Some(node) = self.ab_map.get_mut(id) {
+            node.layer = layer;
+            node.value.0 = aabb.clone();
+            let old_p = node.parent;
+            let old_c = node.parent_child;
+            self.update1(id, layer, old_p, old_c, &aabb);
+            true
+        } else {
+            false
+        }
     }
 
+    /// 更新aabb
+    /// 节点只会在3个位置：
+    ///     1. 如果超出或相交边界，则在outer上
+    ///         这种情况下，node.parent为null
+    ///     2. 如果节点大小下不去，则只能在本层活动，则在BranchNode的nodes
+    ///         这种情况下，node.layer==parent.layer. node.parent_child==N
+    ///     3. 其余的节点都在ChildNode的Ab(List)中
+    ///         node.layer<parent.layer. node.parent_child<N
+    /// 更新节点就是在这3个位置上挪动
+    fn update1(&mut self, id: K, layer: usize, old_p: BranchKey, old_c: u8, aabb: &H::Aabb) {
+        if old_p.is_null() {
+            // 边界外物体更新
+            let root = unsafe { self.slab.get_unchecked_mut(self.root_key) };
+            if H::aabb_contains(&root.aabb, aabb) {
+                self.outer.unlink(id, &mut self.ab_map);
+                self.down(self.root_key, aabb, layer, id);
+            } else {
+                // 不包含，表示还在outer上
+            }
+            return;
+        }
+        let mut parent = unsafe { self.slab.get_unchecked_mut(old_p) };
+        if layer > parent.layer {
+            // ab节点能在当前branch空间的容纳范围
+            if H::aabb_contains(&parent.aabb, aabb) {
+                // 获得新位置
+                let child = H::get_child(&H::get_max_half_loose(&parent.aabb, &parent.loose), aabb);
+                if old_c == child {
+                    return;
+                }
+                Self::remove1(&mut self.ab_map, id, old_c, parent);
+                // 移动到兄弟节点
+                match parent.childs[child as usize] {
+                    ChildNode::Branch(branch) => {
+                        self.down(branch, aabb, layer, id);
+                    }
+                    ChildNode::Ab(ref mut list) => {
+                        Self::add1(&mut self.ab_map, list, id, old_p, child);
+                        if list.len() >= self.adjust.1 && layer < self.deep {
+                            set_dirty(&mut parent.dirty, parent.layer, old_p, &mut self.dirty);
+                        }
+                    }
+                }
+                return;
+            }
+            // 需要向上
+        } else if layer == parent.layer {
+            // 还是继续在本层
+            if H::aabb_contains(&parent.aabb, aabb) {
+                // 还是继续在本层本空间内
+                if (old_c as usize) == N {
+                    return;
+                }
+                // old_c < N 表示是从本空间的ChildNode的Ab(List)移动上来的
+                Self::remove1(&mut self.ab_map, id, old_c, parent);
+                Self::add1(&mut self.ab_map, &mut parent.nodes, id, old_p, N as u8);
+                // Ab(List)变少，但本层空间的节点数量不变，是不需要设脏的
+                return;
+            }
+            // 在当前空间外
+        } else {
+            // 比当前空间大
+        };
+        // 从当前空间移走
+        Self::remove1(&mut self.ab_map, id, old_c, parent);
+        // 如果本空间小于收缩阈值，设置本空间脏标记
+        if parent.is_need_merge(self.adjust.0) {
+            set_dirty(&mut parent.dirty, parent.layer, old_p, &mut self.dirty);
+        }
+        // 向上移动
+        let mut p = parent.parent;
+        while !p.is_null() {
+            parent = unsafe { self.slab.get_unchecked_mut(p) };
+            if parent.layer <= layer && H::aabb_contains(&parent.aabb, aabb) {
+                return self.down(p, aabb, layer, id);
+            }
+            p = parent.parent;
+        }
+        // 根空间不包含该节点，相交或超出，放到outer上
+        Self::add1(
+            &mut self.ab_map,
+            &mut self.outer,
+            id,
+            BranchKey::null(),
+            N as u8,
+        );
+    }
+    /// 从旧的Parent中移除
+    fn remove1(
+        ab_map: &mut SecondaryMap<K, Node<K, AbNode<H::Aabb, T>>>,
+        id: K,
+        old_c: u8,
+        parent: &mut BranchNode<K, H, T, N>,
+    ) {
+        if (old_c as usize) < N {
+            match parent.childs[old_c as usize] {
+                ChildNode::Ab(ref mut list) => list.unlink(id, ab_map),
+                _ => panic!("invalid state"),
+            }
+        } else {
+            parent.nodes.unlink(id, ab_map);
+        }
+    }
+    /// 设置节点新的Parent
+    fn add1(
+        ab_map: &mut SecondaryMap<K, Node<K, AbNode<H::Aabb, T>>>,
+        list: &mut List<K, H, T, N>,
+        id: K,
+        parent: BranchKey,
+        parent_child: u8,
+    ) {
+        let node = unsafe { ab_map.get_unchecked_mut(id) };
+        node.parent = parent;
+        node.parent_child = parent_child;
+        list.link_before(id, K::null(), ab_map);
+    }
     /// 移动指定id的aabb，性能比update要略好
     pub fn shift(&mut self, id: K, distance: H::Vector) -> bool {
-        let r = match self.ab_map.get_mut(id) {
-            Some(node) => {
-                node.value.0 = H::aabb_shift(&node.value.0, &distance);
-                update(
-                    &mut self.slab,
-                    &self.adjust,
-                    self.deep,
-                    &mut self.outer,
-                    &mut self.dirty,
-                    id,
-                    node,
-                    self.root_key,
-                )
-            }
-            _ => return false,
-        };
-        remove_add(self, id, r);
-        true
+        if let Some(node) = self.ab_map.get_mut(id) {
+            let aabb = H::aabb_shift(&node.value.0, &distance);
+            let layer = node.layer;
+            node.value.0 = aabb.clone();
+            let old_p = node.parent;
+            let old_c = node.parent_child;
+            self.update1(id, layer, old_p, old_c, &aabb);
+            true
+        } else {
+            false
+        }
     }
 
     /// 更新指定id的绑定
@@ -282,43 +448,31 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
 
     /// 移除指定id的aabb及其绑定
     pub fn remove(&mut self, id: K) -> Option<(H::Aabb, T)> {
-        let node = match self.ab_map.remove(id) {
-            Some(n) => n,
+        let (parent, parent_child) = match self.ab_map.get(id) {
+            Some(n) => (n.parent, n.parent_child),
             _ => return None,
         };
-        if !node.parent.is_null() {
-            let (p, c) = {
-                let parent = unsafe { self.slab.get_unchecked_mut(node.parent) };
-                if node.parent_child < N {
-                    // 在节点的childs上
-                    match parent.childs[node.parent_child] {
-                        ChildNode::Ab(ref mut ab) => {
-                            ab.remove(&mut self.ab_map, node.prev, node.next)
-                        }
-                        _ => panic!("invalid state"),
-                    }
-                } else {
-                    // 在节点的nodes上
-                    parent.nodes.remove(&mut self.ab_map, node.prev, node.next);
-                }
-                (parent.parent, parent.parent_child)
-            };
-            remove_up(&mut self.slab, self.adjust.0, &mut self.dirty, p, c);
+        if !parent.is_null() {
+            let branch = unsafe { self.slab.get_unchecked_mut(parent) };
+            Self::remove1(&mut self.ab_map, id, parent_child, branch);
+            // 如果本空间小于收缩阈值，设置本空间脏标记
+            if branch.is_need_merge(self.adjust.0) {
+                set_dirty(&mut branch.dirty, branch.layer, parent, &mut self.dirty);
+            }
         } else {
             // 表示在outer上
-            self.outer.remove(&mut self.ab_map, node.prev, node.next);
+            self.outer.unlink(id, &mut self.ab_map);
         }
-        Some((node.value.0, node.value.1))
+        Some(self.ab_map.remove(id).unwrap().take().value)
     }
 
     /// 整理方法，只有整理方法才会创建或销毁BranchNode
     pub fn collect(&mut self) {
-        let mut count = self.dirty.1;
-        if count == 0 {
+        let state = mem::replace(&mut self.dirty.1, DirtyState::new());
+        if state.dirty_count == 0 {
             return;
         }
-        let min_loose = self.min_loose.clone();
-        for i in self.dirty.2..self.dirty.0.len() {
+        for i in state.min_layer..state.max_layer {
             let vec = unsafe { self.dirty.0.get_unchecked_mut(i) };
             let c = vec.len();
             if c == 0 {
@@ -326,24 +480,213 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
             }
             for j in 0..c {
                 let branch_id = unsafe { vec.get_unchecked(j) };
-                collect(
+                Self::collect1(
                     &mut self.slab,
                     &mut self.ab_map,
                     &self.adjust,
                     self.deep,
                     *branch_id,
                     self.loose_layer,
-                    &min_loose,
+                    &self.min_loose,
                 );
             }
             vec.clear();
-            if count <= c {
-                break;
-            }
-            count -= c;
         }
-        self.dirty.1 = 0;
-        self.dirty.2 = usize::max_value();
+    }
+
+    /// 整理方法，只有整理方法才会创建或销毁BranchNode
+    fn collect1(
+        slab: &mut SlotMap<BranchKey, BranchNode<K, H, T, N>>,
+        ab_map: &mut SecondaryMap<K, Node<K, AbNode<H::Aabb, T>>>,
+        adjust: &(usize, usize),
+        deep: usize,
+        branch_id: BranchKey,
+        loose_layer: usize,
+        min_loose: &H::Vector,
+    ) {
+        let parent = match slab.get_mut(branch_id) {
+            Some(branch) => branch,
+            _ => return,
+        };
+        let dirty = mem::replace(&mut parent.dirty, false);
+        if !dirty {
+            return;
+        }
+        let parent_id = parent.parent;
+        // 判断是否收缩
+        if (!parent_id.is_null()) && parent.is_need_merge(adjust.0) {
+            let child = parent.parent_child;
+            let list = Self::merge_branch(ab_map, parent, LinkList::new());
+            slab.remove(branch_id);
+            Self::shrink(slab, ab_map, adjust.0, parent_id, child, branch_id, list);
+            return;
+        }
+        let (need, lists) = parent.need_split_list(adjust.1);
+        if need {
+            let aabb = parent.aabb.clone();
+            let loose = parent.loose.clone();
+            let layer = parent.layer;
+            Self::split(
+                slab,
+                ab_map,
+                adjust.1,
+                deep,
+                lists,
+                &aabb,
+                &loose,
+                layer,
+                branch_id,
+                loose_layer,
+                min_loose,
+            );
+        }
+    }
+    // 合并子空间的所有列表
+    fn merge_branch(
+        ab_map: &mut SecondaryMap<K, Node<K, AbNode<H::Aabb, T>>>,
+        branch: &mut BranchNode<K, H, T, N>,
+        mut list: List<K, H, T, N>,
+    ) -> List<K, H, T, N> {
+        list.append(&mut branch.nodes, ab_map);
+        for n in &mut branch.childs {
+            match n {
+                ChildNode::Ab(other) => list.append(other, ab_map),
+                _ => (),
+            }
+        }
+        list
+    }
+
+    /// 收缩BranchNode
+    fn shrink(
+        slab: &mut SlotMap<BranchKey, BranchNode<K, H, T, N>>,
+        ab_map: &mut SecondaryMap<K, Node<K, AbNode<H::Aabb, T>>>,
+        adjust: usize,
+        branch_id: BranchKey,
+        parent_child: u8,
+        child_id: BranchKey,
+        list: List<K, H, T, N>,
+    ) {
+        let branch = unsafe { slab.get_unchecked_mut(branch_id) };
+        // 判断是否继续收缩
+        if (!branch.parent.is_null()) && branch.is_need_merge_with_child(adjust, child_id, list.len()) {
+            let parent_id = branch.parent;
+            let child = branch.parent_child;
+            let list = Self::merge_branch(ab_map, branch, list);
+            slab.remove(branch_id);
+            Self::shrink(slab, ab_map, adjust, parent_id, child, branch_id, list);
+        } else {
+            for (_, node) in list.iter_mut(ab_map) {
+                node.parent = branch_id;
+                node.parent_child = parent_child;
+            };
+            branch.childs[parent_child as usize] = ChildNode::Ab(list);
+        }
+    }
+    // 对列表进行分裂
+    #[inline]
+    fn split(
+        slab: &mut SlotMap<BranchKey, BranchNode<K, H, T, N>>,
+        ab_map: &mut SecondaryMap<K, Node<K, AbNode<H::Aabb, T>>>,
+        adjust: usize,
+        deep: usize,
+        lists: [List<K, H, T, N>; N],
+        parent_aabb: &H::Aabb,
+        parent_loose: &H::Vector,
+        parent_layer: usize,
+        parent_id: BranchKey,
+        loose_layer: usize,
+        min_loose: &H::Vector,
+    ) {
+        let mut branchs = [BranchKey::null(); N];
+        for (i, list) in lists.into_iter().enumerate() {
+            if list.is_empty() {
+                continue;
+            }
+            let branch = BranchNode::create(
+                parent_aabb,
+                parent_loose,
+                parent_layer,
+                parent_id,
+                loose_layer,
+                min_loose,
+                i as u8,
+            );
+            let branch_id = slab.insert(branch);
+            Self::split_down(
+                slab,
+                ab_map,
+                adjust,
+                deep,
+                list,
+                branch_id,
+                loose_layer,
+                min_loose,
+            );
+            branchs[i] = branch_id;
+        }
+        let parent = unsafe { slab.get_unchecked_mut(parent_id) };
+        for (i, child_id) in branchs.into_iter().enumerate() {
+            if !child_id.is_null() {
+                parent.childs[i] = ChildNode::Branch(child_id);
+            }
+        }
+    }
+    // 将ab节点列表放到分裂出来的八叉空间上
+    fn split_down(
+        slab: &mut SlotMap<BranchKey, BranchNode<K, H, T, N>>,
+        ab_map: &mut SecondaryMap<K, Node<K, AbNode<H::Aabb, T>>>,
+        adjust: usize,
+        deep: usize,
+        mut list: List<K, H, T, N>,
+        parent_id: BranchKey,
+        loose_layer: usize,
+        min_loose: &H::Vector,
+    ) {
+        let parent = unsafe { slab.get_unchecked_mut(parent_id) };
+        let point = H::get_max_half_loose(&parent.aabb, &parent.loose);
+        let mut id = list.pop_front(ab_map);
+        while !id.is_null() {
+            let node = unsafe { ab_map.get_unchecked_mut(id) };
+            if parent.layer >= node.layer {
+                node.parent = parent_id;
+                node.parent_child = N as u8;
+                parent.nodes.link_before(id, K::null(), ab_map);
+            } else {
+                let i = H::get_child(&point, &node.value.0);
+                match parent.childs[i as usize] {
+                    ChildNode::Ab(ref mut ab) => {
+                        node.parent = parent_id;
+                        node.parent_child = i;
+                        ab.link_before(id, K::null(), ab_map);
+                    }
+                    _ => panic!("invalid state"),
+                }
+            }
+            id = list.pop_front(ab_map);
+        }
+        if parent.layer >= deep {
+            return;
+        }
+        let (need, lists) = parent.need_split_list(adjust);
+        if need {
+            let aabb: <H as Helper<N>>::Aabb = parent.aabb.clone();
+            let loose = parent.loose.clone();
+            let layer = parent.layer;
+            Self::split(
+                slab,
+                ab_map,
+                adjust,
+                deep,
+                lists,
+                &aabb,
+                &loose,
+                layer,
+                parent_id,
+                loose_layer,
+                min_loose,
+            );
+        }
     }
 
     /// 查询空间内及相交的ab节点
@@ -354,28 +697,49 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
         ab_arg: &mut B,
         ab_func: fn(arg: &mut B, id: K, aabb: &H::Aabb, bind: &T),
     ) {
-        query(
-            &self.slab,
-            &self.ab_map,
-            self.root_key,
-            branch_arg,
-            branch_func,
-            ab_arg,
-            ab_func,
-        )
+        self.query1(self.root_key, branch_arg, branch_func, ab_arg, ab_func)
     }
 
+    // 查询空间内及相交的ab节点
+    fn query1<A, B>(
+        &self,
+        branch_id: BranchKey,
+        branch_arg: &A,
+        branch_func: fn(arg: &A, aabb: &H::Aabb) -> bool,
+        ab_arg: &mut B,
+        ab_func: fn(arg: &mut B, id: K, aabb: &H::Aabb, bind: &T),
+    ) {
+        let node = unsafe { self.slab.get_unchecked(branch_id) };
+        for (id, ab) in node.nodes.iter(&self.ab_map) {
+            ab_func(ab_arg, id, &ab.value.0, &ab.value.1);
+        }
+        let childs = H::make_childs(&node.aabb, &node.loose);
+        for (i, ab) in childs.iter().enumerate() {
+            match node.childs[i] {
+                ChildNode::Branch(branch) => {
+                    if branch_func(branch_arg, &ab) {
+                        self.query1(branch, branch_arg, branch_func, ab_arg, ab_func);
+                    }
+                }
+                ChildNode::Ab(ref list) if !list.is_empty() => {
+                    if branch_func(branch_arg, &ab) {
+                        for (id, ab) in list.iter(&self.ab_map) {
+                            ab_func(ab_arg, id, &ab.value.0, &ab.value.1);
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
     /// 查询空间外的ab节点
     pub fn query_outer<B>(
         &self,
         arg: &mut B,
         func: fn(arg: &mut B, id: K, aabb: &H::Aabb, bind: &T),
     ) {
-        let mut id = self.outer.head;
-        while !id.is_null() {
-            let ab = unsafe { self.ab_map.get_unchecked(id) };
+        for (id, ab) in self.outer.iter(&self.ab_map) {
             func(arg, id, &ab.value.0, &ab.value.1);
-            id = ab.next;
         }
     }
 
@@ -429,696 +793,170 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
 
 //////////////////////////////////////////////////////本地/////////////////////////////////////////////////////////////////
 
-#[derive(Debug, Clone, Copy)]
-pub struct NodeList<K> {
-    head: K,
-    len: usize,
+#[derive(Clone)]
+pub struct BranchNode<K: Key, H: Helper<N>, T, const N: usize> {
+    aabb: H::Aabb,                      // 包围盒
+    loose: H::Vector,                   // 本层的松散值
+    layer: usize,                       // 表示第几层， 根据aabb大小，决定最低为第几层
+    parent: BranchKey,                  // 父八叉空间
+    childs: [ChildNode<K, H, T, N>; N], // 子八叉空间
+    nodes: List<K, H, T, N>,            // 匹配本层大小的ab节点列表，及节点数量
+    parent_child: u8,                   // 对应父八叉空间childs的位置
+    dirty: bool, // 脏标记. 添加了节点，并且某个子八叉空间(AbNode)的数量超过分裂阈值，可能分裂。删除了节点，并且自己及其下ab节点的数量小于收缩阈值，可能收缩
 }
-impl<K: Key> NodeList<K> {
+impl<K: Key, H: Helper<N>, T, const N: usize> BranchNode<K, H, T, N> {
     #[inline]
-    pub fn new() -> NodeList<K> {
-        NodeList {
-            head: K::null(),
-            len: 0,
-        }
-    }
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.len
-    }
-    #[inline]
-    pub fn push(&mut self, id: K) {
-        self.head = id;
-        self.len += 1;
-    }
-    #[inline]
-    pub fn remove<Aabb, T>(
-        &mut self,
-        map: &mut SecondaryMap<K, AbNode<K, Aabb, T>>,
-        prev: K,
-        next: K,
-    ) {
-        if !prev.is_null() {
-            let node = unsafe { map.get_unchecked_mut(prev) };
-            node.next = next;
-        } else {
-            self.head = next;
-        }
-        if !next.is_null() {
-            let node = unsafe { map.get_unchecked_mut(next) };
-            node.prev = prev;
-        }
-        self.len -= 1;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct BranchNode<K: Key, H: Helper<N>, const N: usize> {
-    aabb: H::Aabb,             // 包围盒
-    loose: H::Vector,          // 本层的松散值
-    parent: K,                 // 父八叉节点
-    parent_child: usize,       // 对应父八叉节点childs的位置
-    childs: [ChildNode<K>; N], // 子八叉节点
-    layer: usize,              // 表示第几层， 根据aabb大小，决定最低为第几层
-    nodes: NodeList<K>,        // 匹配本层大小的ab节点列表，及节点数量
-    dirty: usize, // 脏标记, 1-128对应节点被修改。添加了节点，并且某个子八叉节点(AbNode)的数量超过阈值，可能分化。删除了节点，并且自己及其下ab节点的数量超过阈值，可能收缩
-}
-impl<K: Key, H: Helper<N>, const N: usize> BranchNode<K, H, N> {
-    #[inline]
-    pub fn new(aabb: H::Aabb, loose: H::Vector, parent: K, child: usize, layer: usize) -> Self {
+    pub fn new(
+        aabb: H::Aabb,
+        loose: H::Vector,
+        layer: usize,
+        parent: BranchKey,
+        child: u8,
+    ) -> Self {
+        let childs = [0; N].map(|_| ChildNode::Ab(Default::default()));
         BranchNode {
             aabb,
             loose,
-            parent,
-            parent_child: child,
-            childs: [ChildNode::Ab(NodeList::new()); N],
             layer,
-            nodes: NodeList::new(),
-            dirty: 0,
+            parent,
+            childs,
+            nodes: LinkList::new(),
+            parent_child: child,
+            dirty: false,
         }
     }
-}
-#[derive(Debug, Clone, Copy)]
-enum ChildNode<K> {
-    Branch(K, usize), // 对应的BranchNode, 及其下ab节点的数量
-    Ab(NodeList<K>),  // ab节点列表，及节点数量
-}
-
-#[derive(Debug, Clone)]
-pub struct AbNode<K: Key, Aabb, T> {
-    value: (Aabb, T),    // 包围盒
-    layer: usize,        // 表示第几层， 根据aabb大小，决定最低为第几层
-    parent: K,           // 父八叉节点
-    parent_child: usize, // 父八叉节点所在的子八叉节点， 8表示不在子八叉节点上
-    prev: K,             // 前ab节点
-    next: K,             // 后ab节点
-}
-impl<K: Key, Aabb, T> AbNode<K, Aabb, T> {
-    pub fn new(aabb: Aabb, bind: T, layer: usize, n: usize) -> Self {
-        AbNode {
-            value: (aabb, bind),
-            layer: layer,
-            parent: K::null(),
-            parent_child: n,
-            prev: K::null(),
-            next: K::null(),
-        }
+    // 创建指定的子节点
+    fn create(
+        aabb: &H::Aabb,
+        loose: &H::Vector,
+        layer: usize,
+        parent_id: BranchKey,
+        loose_layer: usize,
+        min_loose: &H::Vector,
+        child: u8,
+    ) -> Self {
+        let (ab, loose) = H::create_child(aabb, loose, layer, loose_layer, min_loose, child);
+        BranchNode::new(ab, loose, layer + 1, parent_id, child)
     }
-}
-
-// ab节点下降
-fn down<K: Key, H: Helper<N>, T, const N: usize>(
-    slab: &mut SlotMap<K, BranchNode<K, H, N>>,
-    adjust: usize,
-    deep: usize,
-    branch_id: K,
-    node: &mut AbNode<K, H::Aabb, T>,
-    id: K,
-) -> (usize, K) {
-    let parent = unsafe { slab.get_unchecked_mut(branch_id) };
-    if parent.layer >= node.layer {
-        node.parent = branch_id;
-        node.next = parent.nodes.head;
-        parent.nodes.push(id);
-        return (0, K::null());
-    }
-    let i = H::get_child(
-        &H::get_max_half_loose(&parent.aabb, &parent.loose),
-        &node.value.0,
-    );
-    match parent.childs[i] {
-        ChildNode::Branch(branch, ref mut num) => {
-            *num += 1;
-            return down(slab, adjust, deep, branch, node, id);
+    // 是否需要合并
+    pub fn is_need_merge(&self, adjust_min: usize) -> bool {
+        if self.parent.is_null() {
+            return false;
         }
-        ChildNode::Ab(ref mut list) => {
-            node.parent = branch_id;
-            node.parent_child = i;
-            node.next = list.head;
-            list.push(id);
-            if list.len > adjust && parent.layer < deep {
-                return set_dirty(&mut parent.dirty, i, parent.layer, branch_id);
+        let mut len = self.nodes.len();
+        for n in &self.childs {
+            match n {
+                ChildNode::Branch(_) => return false,
+                ChildNode::Ab(list) => len += list.len(),
             }
-            return (0, K::null());
         }
+        len <= adjust_min
     }
-}
-
-// 更新aabb
-fn update<K: Key, H: Helper<N>, T, const N: usize>(
-    slab: &mut SlotMap<K, BranchNode<K, H, N>>,
-    adjust: &(usize, usize),
-    deep: usize,
-    outer: &mut NodeList<K>,
-    dirty: &mut (Vec<Vec<K>>, usize, usize),
-    id: K,
-    node: &mut AbNode<K, H::Aabb, T>,
-    root_key: K,
-) -> Option<(K, usize, K, K, K)> {
-    let old_p = node.parent;
-    if !old_p.is_null() {
-        let old_c = node.parent_child;
-        let mut parent = unsafe { slab.get_unchecked_mut(old_p) };
-        if node.layer > parent.layer {
-            // ab节点能在当前branch节点的容纳范围
-            if H::aabb_contains(&parent.aabb, &node.value.0) {
-                // 获得新位置
-                let child = H::get_child(
-                    &H::get_max_half_loose(&parent.aabb, &parent.loose),
-                    &node.value.0,
-                );
-                if old_c == child {
-                    return None;
-                }
-                if child < N {
-                    let prev = node.prev;
-                    let next = node.next;
-                    node.prev = K::null();
-                    // 移动到兄弟节点
-                    match parent.childs[child] {
-                        ChildNode::Branch(branch, ref mut num) => {
-                            *num += 1;
-                            node.parent_child = N;
-                            set_tree_dirty(dirty, down(slab, adjust.1, deep, branch, node, id));
-                            return Some((old_p, old_c, prev, next, node.next));
-                        }
-                        ChildNode::Ab(ref mut list) => {
-                            node.parent_child = child;
-                            node.next = list.head;
-                            list.push(id);
-                            if list.len > adjust.1 && node.layer < deep {
-                                set_dirty(&mut parent.dirty, child, parent.layer, id);
-                            }
-                            return Some((old_p, old_c, prev, next, node.next));
-                        }
+    // 是否需要合并
+    pub fn is_need_merge_with_child(
+        &self,
+        adjust_min: usize,
+        child: BranchKey,
+        child_node_len: usize,
+    ) -> bool {
+        let mut len = self.nodes.len();
+        for n in &self.childs {
+            match n {
+                ChildNode::Branch(b) => {
+                    if b != &child {
+                        return false;
                     }
+                    len += child_node_len;
                 }
-            }
-        // 需要向上
-        } else if node.layer == parent.layer {
-            if H::aabb_contains(&parent.aabb, &node.value.0) {
-                if old_c == N {
-                    return None;
-                }
-                let prev = node.prev;
-                let next = node.next;
-                node.prev = K::null();
-                // 从child 移到 nodes
-                node.parent_child = N;
-                node.next = parent.nodes.head;
-                parent.nodes.push(id);
-                return Some((old_p, old_c, prev, next, node.next));
-            }
-        // 在当前节点外
-        } else {
-            // 比当前节点大
-        };
-        let prev = node.prev;
-        let next = node.next;
-        if old_p != root_key {
-            // 向上移动
-            let mut p = parent.parent;
-            let mut c = parent.parent_child;
-            loop {
-                parent = unsafe { slab.get_unchecked_mut(p) };
-                match parent.childs[c] {
-                    ChildNode::Branch(_, ref mut num) => {
-                        *num -= 1;
-                        if *num < adjust.0 {
-                            let d = set_dirty(&mut parent.dirty, c, parent.layer, p);
-                            if !d.1.is_null() {
-                                set_tree_dirty(dirty, d);
-                            }
-                        }
-                    }
-                    _ => panic!("invalid state"),
-                }
-                if parent.layer <= node.layer && H::aabb_contains(&parent.aabb, &node.value.0) {
-                    node.prev = K::null();
-                    node.parent_child = N;
-                    set_tree_dirty(dirty, down(slab, adjust.1, deep, p, node, id));
-                    return Some((old_p, old_c, prev, next, node.next));
-                }
-                p = parent.parent;
-                c = parent.parent_child;
-                if p.is_null() {
-                    break;
-                }
+                ChildNode::Ab(list) => len += list.len(),
             }
         }
-        // 判断根节点是否相交
-        if H::aabb_intersects(&parent.aabb, &node.value.0) {
-            if old_p == root_key && old_c == N {
-                return None;
-            }
-            // 相交的放在root的nodes上
-            node.parent = root_key;
-            node.next = parent.nodes.head;
-            parent.nodes.push(id);
-        } else {
-            node.parent = K::null();
-            node.next = outer.head;
-            outer.push(id);
-        }
-        node.prev = K::null();
-        node.parent_child = N;
-        return Some((old_p, old_c, prev, next, node.next));
-    } else {
-        // 边界外物体更新
-        let root = unsafe { slab.get_unchecked_mut(root_key) };
-        if H::aabb_intersects(&root.aabb, &node.value.0) {
-            // 判断是否相交或包含
-            let prev = node.prev;
-            let next = node.next;
-            node.prev = K::null();
-            node.parent_child = N;
-
-			if node.layer == root.layer {
-				// 原本就在root上，不需要下沉
-				return None;
-			}
-
-            if H::aabb_contains(&root.aabb, &node.value.0) {
-                set_tree_dirty(dirty, down(slab, adjust.1, deep, root_key, node, id));
-            } else {
-                // 相交的放在root的nodes上
-                node.parent = K::null();
-                node.next = root.nodes.head;
-                root.nodes.push(id);
-            }
-            Some((K::null(), 0, prev, next, node.next))
-        } else {
-            // 表示还在outer上
-            None
-        }
+        len <= adjust_min
     }
-}
-
-/// 从NodeList中移除，并可能添加
-pub fn remove_add<K: Key, H: Helper<N>, T, const N: usize>(
-    tree: &mut Tree<K, H, T, N>,
-    id: K,
-    r: Option<(K, usize, K, K, K)>,
-) {
-    // 从NodeList中移除
-    if let Some((rid, child, prev, next, cur_next)) = r {
-        if !rid.is_null() {
-            let branch = unsafe { tree.slab.get_unchecked_mut(rid) };
-            if child < N {
-                match branch.childs[child] {
-                    ChildNode::Ab(ref mut ab) => ab.remove(&mut tree.ab_map, prev, next),
-                    _ => panic!("invalid state"),
-                }
-            } else {
-                branch.nodes.remove(&mut tree.ab_map, prev, next);
-            }
-        } else {
-            tree.outer.remove(&mut tree.ab_map, prev, next);
-        }
-        if !cur_next.is_null() {
-            let n = unsafe { tree.ab_map.get_unchecked_mut(cur_next) };
-            n.prev = id;
-        }
-    }
-}
-
-// 移除时，向上修改数量，并可能设脏
-#[inline]
-fn remove_up<K: Key, H: Helper<N>, const N: usize>(
-    slab: &mut SlotMap<K, BranchNode<K, H, N>>,
-    adjust: usize,
-    dirty: &mut (Vec<Vec<K>>, usize, usize),
-    parent: K,
-    child: usize,
-) {
-    if parent.is_null() {
-        return;
-    }
-    let (p, c) = {
-        let node = unsafe { slab.get_unchecked_mut(parent) };
-        match node.childs[child] {
-            ChildNode::Branch(_, ref mut num) => {
-                *num -= 1;
-                if *num < adjust {
-                    let d = set_dirty(&mut node.dirty, child, node.layer, parent);
-                    if !d.1.is_null() {
-                        set_tree_dirty(dirty, d);
-                    }
-                }
-            }
-            _ => panic!("invalid state"),
-        }
-        (node.parent, node.parent_child)
-    };
-    remove_up(slab, adjust, dirty, p, c);
-}
-
-#[inline]
-fn set_dirty<K: Key>(dirty: &mut usize, index: usize, layer: usize, rid: K) -> (usize, K) {
-    if *dirty == 0 {
-        *dirty |= 1 << index;
-        return (layer, rid);
-    }
-    *dirty |= 1 << index;
-    return (0, K::null());
-}
-// 设置脏标记
-#[inline]
-fn set_tree_dirty<K: Key>(dirty: &mut (Vec<Vec<K>>, usize, usize), (layer, rid): (usize, K)) {
-    if rid.is_null() {
-        return;
-    }
-    dirty.1 += 1;
-    if dirty.2 > layer {
-        dirty.2 = layer;
-    }
-    if dirty.0.len() <= layer {
-        for _ in dirty.0.len()..layer + 1 {
-            dirty.0.push(Vec::new())
-        }
-    }
-    let vec = unsafe { dirty.0.get_unchecked_mut(layer) };
-    vec.push(rid);
-}
-
-// 创建指定的子节点
-fn create_child<K: Key, H: Helper<N>, const N: usize>(
-    aabb: &H::Aabb,
-    loose: &H::Vector,
-    layer: usize,
-    parent_id: K,
-    loose_layer: usize,
-    min_loose: &H::Vector,
-    child: usize,
-) -> BranchNode<K, H, N> {
-    let (ab, loose) = H::create_child(aabb, loose, layer, loose_layer, min_loose, child);
-    BranchNode::new(ab, loose, parent_id, child, layer + 1)
-}
-
-// 整理方法，只有整理方法才会创建或销毁BranchNode
-fn collect<K: Key, H: Helper<N>, T, const N: usize>(
-    branch_slab: &mut SlotMap<K, BranchNode<K, H, N>>,
-    ab_map: &mut SecondaryMap<K, AbNode<K, H::Aabb, T>>,
-    adjust: &(usize, usize),
-    deep: usize,
-    parent_id: K,
-    loose_layer: usize,
-    min_loose: &H::Vector,
-) {
-    let (dirty, childs, ab, loose, layer) = {
-        let parent = match branch_slab.get_mut(parent_id) {
-            Some(branch) => branch,
-            _ => return,
-        };
-        let dirty = parent.dirty;
-        if parent.dirty == 0 {
-            return;
-        }
-        parent.dirty = 0;
-        (
-            dirty,
-            parent.childs.clone(),
-            parent.aabb.clone(),
-            parent.loose.clone(),
-            parent.layer,
-        )
-    };
-    for i in 0..N {
-        if dirty & (1 << i) != 0 {
-            match childs[i] {
-                ChildNode::Branch(branch, num) if num < adjust.0 => {
-                    let mut list = NodeList::new();
-                    if num > 0 {
-                        shrink(branch_slab, ab_map, parent_id, i, branch, &mut list);
-                    }
-                    let parent = unsafe { branch_slab.get_unchecked_mut(parent_id) };
-                    parent.childs[i] = ChildNode::Ab(list);
-                }
-                ChildNode::Ab(ref list) if list.len > adjust.1 => {
-                    let child_id = split(
-                        branch_slab,
-                        ab_map,
-                        adjust,
-                        deep,
-                        list,
-                        &ab,
-                        &loose,
-                        layer,
-                        parent_id,
-                        loose_layer,
-                        min_loose,
-                        i,
-                    );
-                    let parent = unsafe { branch_slab.get_unchecked_mut(parent_id) };
-                    parent.childs[i] = ChildNode::Branch(child_id, list.len);
+    // 需要劈分的列表
+    pub fn need_split_list(&mut self, adjust_max: usize) -> (bool, [List<K, H, T, N>; N]) {
+        let mut need = false;
+        let mut childs = [0; N].map(|_| Default::default());
+        for (i, n) in self.childs.iter_mut().enumerate() {
+            match n {
+                ChildNode::Ab(list) if list.len() >= adjust_max => {
+                    mem::swap(list, &mut childs[i]);
+                    need = true;
                 }
                 _ => (),
             }
         }
+        (need, childs)
     }
 }
-// 收缩BranchNode
-fn shrink<K: Key, H: Helper<N>, T, const N: usize>(
-    branch_slab: &mut SlotMap<K, BranchNode<K, H, N>>,
-    ab_map: &mut SecondaryMap<K, AbNode<K, H::Aabb, T>>,
-    parent: K,
-    parent_child: usize,
-    branch_id: K,
-    result: &mut NodeList<K>,
-) {
-    let node = branch_slab.remove(branch_id).unwrap();
-    if node.nodes.len > 0 {
-        shrink_merge(ab_map, parent, parent_child, &node.nodes, result);
-    }
-    for index in 0..N {
-        match node.childs[index] {
-            ChildNode::Ab(ref list) if list.len > 0 => {
-                shrink_merge(ab_map, parent, parent_child, &list, result);
-            }
-            ChildNode::Branch(branch, len) if len > 0 => {
-                shrink(branch_slab, ab_map, parent, parent_child, branch, result);
-            }
-            _ => (),
-        }
-    }
+#[derive(Clone)]
+enum ChildNode<K: Key, H: Helper<N>, T, const N: usize> {
+    Branch(BranchKey),    // 对应的BranchNode, 及其下ab节点的数量
+    Ab(List<K, H, T, N>), // ab节点列表，及节点数量
 }
-// 合并ab列表到结果列表中
-#[inline]
-fn shrink_merge<K: Key, Aabb, T>(
-    ab_map: &mut SecondaryMap<K, AbNode<K, Aabb, T>>,
-    parent: K,
-    parent_child: usize,
-    list: &NodeList<K>,
-    result: &mut NodeList<K>,
-) {
-    let old = result.head;
-    result.head = list.head;
-    result.len += list.len;
-    let mut id = list.head;
-    loop {
-        let ab = unsafe { ab_map.get_unchecked_mut(id) };
-        ab.parent = parent;
-        ab.parent_child = parent_child;
-        if ab.next.is_null() {
-            ab.next = old;
-            break;
+
+#[derive(Debug, Clone)]
+pub struct AbNode<Aabb, T> {
+    value: (Aabb, T),  // 包围盒
+    parent: BranchKey, // 父八叉空间
+    layer: usize,      // 表示第几层， 根据aabb大小，决定最低为第几层
+    parent_child: u8,  // 父八叉空间所在的子八叉空间， 8表示不在子八叉空间上
+}
+impl<Aabb, T> AbNode<Aabb, T> {
+    pub fn new(aabb: Aabb, bind: T, layer: usize, n: u8) -> Self {
+        AbNode {
+            value: (aabb, bind),
+            layer: layer,
+            parent: BranchKey::null(),
+            parent_child: n,
         }
-        id = ab.next;
-    }
-    if !old.is_null() {
-        let ab = unsafe { ab_map.get_unchecked_mut(old) };
-        ab.prev = id;
     }
 }
 
-// 分裂出BranchNode
-#[inline]
-fn split<K: Key, H: Helper<N>, T, const N: usize>(
-    branch_slab: &mut SlotMap<K, BranchNode<K, H, N>>,
-    ab_map: &mut SecondaryMap<K, AbNode<K, H::Aabb, T>>,
-    adjust: &(usize, usize),
-    deep: usize,
-    list: &NodeList<K>,
-    parent_ab: &H::Aabb,
-    parent_loose: &H::Vector,
-    parent_layer: usize,
-    parent_id: K,
-    loose_layer: usize,
-    min_loose: &H::Vector,
-    child: usize,
-) -> K {
-    let branch = create_child(
-        parent_ab,
-        parent_loose,
-        parent_layer,
-        parent_id,
-        loose_layer,
-        min_loose,
-        child,
-    );
-    let branch_id = branch_slab.insert(branch);
-    let branch = unsafe { branch_slab.get_unchecked_mut(branch_id) };
-    if split_down(ab_map, adjust.1, deep, branch, branch_id, list) > 0 {
-        collect(
-            branch_slab,
-            ab_map,
-            adjust,
-            deep,
-            branch_id,
-            loose_layer,
-            min_loose,
-        );
-    }
-    branch_id
+#[derive(Debug)]
+pub struct DirtyState {
+    dirty_count: usize,
+    min_layer: usize,
+    max_layer: usize,
 }
-// 将ab节点列表放到分裂出来的八叉节点上
-fn split_down<K: Key, H: Helper<N>, T, const N: usize>(
-    map: &mut SecondaryMap<K, AbNode<K, H::Aabb, T>>,
-    adjust: usize,
-    deep: usize,
-    parent: &mut BranchNode<K, H, N>,
-    parent_id: K,
-    list: &NodeList<K>,
-) -> usize {
-    let point = H::get_max_half_loose(&parent.aabb, &parent.loose);
-    let mut id = list.head;
-    while !id.is_null() {
-        let node = unsafe { map.get_unchecked_mut(id) };
-        let nid = id;
-        id = node.next;
-        node.prev = K::null();
-        if parent.layer >= node.layer {
-            node.parent = parent_id;
-            node.parent_child = N;
-            node.next = parent.nodes.head;
-            parent.nodes.push(nid);
-            continue;
+impl DirtyState {
+    fn new() -> Self {
+        DirtyState {
+            dirty_count: 0,
+            min_layer: usize::max_value(),
+            max_layer: 0,
         }
-        id = node.next;
-        let i = H::get_child(&point, &node.value.0);
-        match parent.childs[i] {
-            ChildNode::Ab(ref mut list) => {
-                node.parent = parent_id;
-                node.parent_child = i;
-                node.next = list.head;
-                list.push(nid);
-                if list.len > adjust && parent.layer < deep {
-                    set_dirty(&mut parent.dirty, i, parent.layer, parent_id);
-                }
-                continue;
-            }
-            _ => panic!("invalid state"),
-        }
-    }
-    fix_prev(map, parent.nodes.head);
-    for i in 0..N {
-        match parent.childs[i] {
-            ChildNode::Ab(ref list) => fix_prev(map, list.head),
-            _ => (), // panic
-        }
-    }
-    parent.dirty
-}
-// 修复prev
-#[inline]
-fn fix_prev<K: Key, Aabb, T>(map: &mut SecondaryMap<K, AbNode<K, Aabb, T>>, mut head: K) {
-    if head.is_null() {
-        return;
-    }
-    let node = unsafe { map.get_unchecked(head) };
-    let mut next = node.next;
-    while !next.is_null() {
-        let node = unsafe { map.get_unchecked_mut(next) };
-        node.prev = head;
-        head = next;
-        next = node.next;
     }
 }
 
-// 查询空间内及相交的ab节点
-fn query<K: Key, H: Helper<N>, T, A, B, const N: usize>(
-    branch_slab: &SlotMap<K, BranchNode<K, H, N>>,
-    ab_map: &SecondaryMap<K, AbNode<K, H::Aabb, T>>,
-    branch_id: K,
-    branch_arg: &A,
-    branch_func: fn(arg: &A, aabb: &H::Aabb) -> bool,
-    ab_arg: &mut B,
-    ab_func: fn(arg: &mut B, id: K, aabb: &H::Aabb, bind: &T),
+#[inline]
+fn set_dirty(
+    dirty: &mut bool,
+    layer: usize,
+    rid: BranchKey,
+    dirty_list: &mut (Vec<Vec<BranchKey>>, DirtyState),
 ) {
-    let node = unsafe { branch_slab.get_unchecked(branch_id) };
-    let mut id = node.nodes.head;
-    while !id.is_null() {
-        let ab = unsafe { ab_map.get_unchecked(id) };
-        ab_func(ab_arg, id, &ab.value.0, &ab.value.1);
-		if id == ab.next {
-			panic!("query1======{:?}", id)
-		}
-        id = ab.next;
+    dirty_list.1.dirty_count += 1;
+    if !*dirty {
+        // 该八叉空间首次脏，则放入脏列表
+        set_tree_dirty(dirty_list, layer, rid);
     }
-    let childs = H::make_childs(&node.aabb, &node.loose);
-    let mut i = 0;
-    for ab in childs {
-        match node.childs[i] {
-            ChildNode::Branch(branch, ref num) if *num > 0 => {
-                if branch_func(branch_arg, &ab) {
-					let node = unsafe { branch_slab.get_unchecked(branch) };
-					if id == node.nodes.head {
-						panic!("query2======{:?}", id)
-					}
-                    query(
-                        branch_slab,
-                        ab_map,
-                        branch,
-                        branch_arg,
-                        branch_func,
-                        ab_arg,
-                        ab_func,
-                    );
-                }
-            }
-            ChildNode::Ab(ref list) if !list.head.is_null() => {
-                if branch_func(branch_arg, &ab) {
-                    let mut id = list.head;
-                    loop {
-                        let ab = unsafe { ab_map.get_unchecked(id) };
-                        ab_func(ab_arg, id, &ab.value.0, &ab.value.1);
-						if id == ab.next {
-							panic!("query3======{:?}", id)
-						}
-                        id = ab.next;
-                        if id.is_null() {
-                            break;
-                        }
-                    }
-                }
-            }
-            _ => (),
-        }
-        i += 1;
-    }
+    *dirty = true;
 }
-
-// 和指定的列表进行碰撞
-// fn collision_list<H: Helper, T, A>(
-//     map: &VecMap<AbNode<S, T>>,
-//     id: usize,
-//     aabb: &H::AABB,
-//     bind: &T,
-//     arg: &mut A,
-//     func: fn(
-//         arg: &mut A,
-//         a_id: usize,
-//         a_aabb: &H::AABB,
-//         a_bind: &T,
-//         b_id: usize,
-//         b_aabb: &H::AABB,
-//         b_bind: &T,
-//     ) -> bool,
-//     mut head: usize,
-// ) {
-//     while head > 0 {
-//         let b = unsafe { map.get_unchecked(head) };
-//         func(arg, id, aabb, bind, head, &b.aabb, &b.value.1);
-//         head = b.next;
-//     }
-// }
+// 设置脏标记
+#[inline]
+fn set_tree_dirty(dirty: &mut (Vec<Vec<BranchKey>>, DirtyState), layer: usize, rid: BranchKey) {
+    if dirty.1.min_layer > layer {
+        dirty.1.min_layer = layer;
+    }
+    if dirty.1.max_layer <= layer {
+        dirty.1.max_layer = layer + 1;
+    }
+    if dirty.0.len() <= layer as usize {
+        for _ in dirty.0.len()..layer as usize + 1 {
+            dirty.0.push(Vec::new())
+        }
+    }
+    let vec = unsafe { dirty.0.get_unchecked_mut(layer as usize) };
+    vec.push(rid);
+}
