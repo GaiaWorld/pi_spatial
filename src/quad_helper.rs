@@ -219,7 +219,6 @@ pub fn ab_query_func<K: Key, T: Clone + PartialOrd + fmt::Debug>(
     aabb: &Aabb,
     bind: &T,
 ) {
-    // println!("ab_query_func: id: {}, bind:{:?}, arg: {:?}", id, bind, arg.result);
     if intersects(&arg.aabb, aabb) {
         if bind > &arg.result.1 {
             arg.result.0 = id;
@@ -231,7 +230,6 @@ pub fn ab_query_func<K: Key, T: Clone + PartialOrd + fmt::Debug>(
 #[test]
 fn test1() {
 	use pi_slotmap::{SlotMap, DefaultKey};
-    use pi_null::Null;
 
     let max = Vector2::new(1024f32, 1024f32);
     let min = Vector2::new(10f32, 10f32);
@@ -258,7 +256,7 @@ fn test1() {
         );
     }
     tree.collect();
-    for i in 0..8 {
+    for _ in 0..8 {
         tree.remove(keys.pop().unwrap());
     }
     tree.collect();
@@ -1111,9 +1109,8 @@ fn test1() {
 // // }
 
 #[test]
-fn test_update() {
-	use pi_slotmap::{SlotMap, DefaultKey};
-    use pi_null::Null;
+fn test_rand() {
+	use pi_slotmap::SlotMap;
     use pcg_rand::Pcg32;
     use rand::{Rng, SeedableRng};
     let max = Vector2::new(1024f32, 1024f32);

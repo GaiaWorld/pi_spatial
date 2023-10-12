@@ -638,14 +638,15 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
         ab_map: &mut SecondaryMap<K, Node<K, AbNode<H::Aabb, T>>>,
         adjust: usize,
         deep: usize,
-        mut list: List<K, H, T, N>,
+        list: List<K, H, T, N>,
         parent_id: BranchKey,
         loose_layer: usize,
         min_loose: &H::Vector,
     ) {
         let parent = unsafe { slab.get_unchecked_mut(parent_id) };
         let point = H::get_max_half_loose(&parent.aabb, &parent.loose);
-        let mut id = list.pop_front(ab_map);
+        let mut drain = list.drain();
+        let mut id = drain.pop_front(ab_map);
         while !id.is_null() {
             let node = unsafe { ab_map.get_unchecked_mut(id) };
             if parent.layer >= node.layer {
@@ -663,7 +664,7 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
                     _ => panic!("invalid state"),
                 }
             }
-            id = list.pop_front(ab_map);
+            id = drain.pop_front(ab_map);
         }
         if parent.layer >= deep {
             return;
