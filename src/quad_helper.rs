@@ -1168,3 +1168,41 @@ fn test_rand() {
         }
     }
 }
+
+
+
+#[test]
+pub fn test_overflow() {
+    type Vector2 = nalgebra::Vector2<f32>;
+    type Point2 = nalgebra::Point2<f32>;
+    type Aabb2 = parry2d::bounding_volume::Aabb;
+
+    let max = Vector2::new(1024f32, 1024f32);
+    let min = Vector2::new(16f32, 16f32);
+    let mut tree: QuadTree<usize, usize> = QuadTree::new(
+        Aabb2::new(
+            Point2::new(-1024f32, -1024f32),
+            Point2::new(4096f32, 4096f32),
+        ),
+        max,
+        min,
+        0,
+        0,
+        16, //????
+    );
+    tree.add(1, Aabb2::new(
+        Point2::new(-1656f32, -730f32),
+        Point2::new(826f32, 1356f32),
+    ), 1);
+    tree.add(2, Aabb2::new(
+        Point2::new(20f32, 20f32),
+        Point2::new(80f32, 80f32),
+    ), 2);
+    // tree.collect();
+
+    fn ab_query_func(_arg: &mut (), _id: usize, _aabb: &Aabb2, bind: &usize) {
+        println!("bind======{}", *bind);
+    }
+    let aabb = Aabb2::new(Point2::new(50.0, 50.0), Point2::new(50.0, 50.0));
+    tree.query(&aabb, intersects, &mut (), ab_query_func);
+}
