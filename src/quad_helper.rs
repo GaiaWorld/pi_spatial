@@ -1200,9 +1200,12 @@ pub fn test_overflow() {
     ), 2);
     // tree.collect();
 
-    fn ab_query_func(_arg: &mut (), _id: usize, _aabb: &Aabb2, bind: &usize) {
-        println!("bind======{}", *bind);
+    let mut v: Vec<usize> = Vec::new();
+    fn ab_query_func(arg: &mut Vec<usize>, _id: usize, _aabb: &Aabb2, bind: &usize) {
+        arg.push(*bind);
     }
     let aabb = Aabb2::new(Point2::new(50.0, 50.0), Point2::new(50.0, 50.0));
-    tree.query(&aabb, intersects, &mut (), ab_query_func);
+    tree.query(&aabb, intersects, &mut v, ab_query_func);
+
+    debug_assert_eq!(v.as_slice(), &[1, 2]);
 }
