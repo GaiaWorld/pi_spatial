@@ -1,6 +1,6 @@
 [package]
 name = "pi_spatial"
-version = "0.5.7"
+version = "0.5.8"
 authors = ["yineng <dev@dev.com>"]
 edition = "2021"
 description = "sparial octtree quadtree"
@@ -12,9 +12,9 @@ keywords = ["pi", "spatial", "partition"]
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-parry2d = "0.13"
-parry3d = "0.13"
-nalgebra = "0.32"
+parry2d = "0.16"
+parry3d = "0.16"
+nalgebra = "0.33"
 num-traits = "0.2"
 pi_slotmap="0.1"
 pi_null = "0.1"

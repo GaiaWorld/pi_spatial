@@ -1171,7 +1171,7 @@ fn test_rand() {
 
 
 
-#[test]
+#[test] 
 pub fn test_overflow() {
     type Vector2 = nalgebra::Vector2<f32>;
     type Point2 = nalgebra::Point2<f32>;
@@ -1202,6 +1202,7 @@ pub fn test_overflow() {
 
     let mut v: Vec<usize> = Vec::new();
     fn ab_query_func(arg: &mut Vec<usize>, _id: usize, _aabb: &Aabb2, bind: &usize) {
+        // dbg!(id, aabb, bind);
         arg.push(*bind);
     }
     let aabb = Aabb2::new(Point2::new(50.0, 50.0), Point2::new(50.0, 50.0));

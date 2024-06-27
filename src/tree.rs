@@ -698,6 +698,7 @@ impl<K: Key, H: Helper<N>, T, const N: usize> Tree<K, H, T, N> {
         ab_arg: &mut B,
         ab_func: fn(arg: &mut B, id: K, aabb: &H::Aabb, bind: &T),
     ) {
+        self.query_outer(ab_arg, ab_func);
         self.query1(self.root_key, branch_arg, branch_func, ab_arg, ab_func)
     }
 
