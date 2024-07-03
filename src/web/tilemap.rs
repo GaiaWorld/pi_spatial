@@ -3,7 +3,9 @@ use parry2d::bounding_volume::Aabb;
 use pi_slotmap::{SlotMap, DefaultKey, Key, KeyData};
 use wasm_bindgen::prelude::wasm_bindgen;
 
+use crate::quad_helper::intersects;
 use crate::tilemap::TileMap as TileMapInner;
+use super::quad_tree::{AbQueryArgs, ab_query_func};
 
 #[wasm_bindgen]
 pub struct TileMapTree(TileMapInner<DefaultKey, i32>, SlotMap<DefaultKey, ()>);
@@ -36,15 +38,18 @@ impl TileMapTree {
         let max = Point2::new(max_x, max_y);
         self.0.update(DefaultKey::from(KeyData::from_ffi(id as u64)), Aabb::new(min, max));
     }
+    pub fn shift(&mut self, id: f64, x: f32, y: f32) {
+        self.0.shift(DefaultKey::from(KeyData::from_ffi(id as u64)), Vector2::new(x, y));
+    }
+    pub fn move_to(&mut self, id: f64, x: f32, y: f32) {
+        self.0.move_to(DefaultKey::from(KeyData::from_ffi(id as u64)), Vector2::new(x, y));
+    }
 
-    pub fn query(&self, min_x: f32, min_y: f32, max_x: f32, max_y: f32,) -> Vec<u32> {
+    pub fn query(&self, min_x: f32, min_y: f32, max_x: f32, max_y: f32,) -> Vec<f64> {
         let min = Point2::new(min_x, min_y);
         let max = Point2::new(max_x, max_y);
-        let (len, iter) = self.0.query_iter(&Aabb::new(min, max));
-        let mut result = Vec::with_capacity(len);
-        for item in iter.into_iter() {
-            result.push(item as u32);
-        }
-        result
+        let mut args = AbQueryArgs::new(ab, usize::MAX);
+        self.0.query(&AABB::new(min, max), &mut args, ab_query_func);
+        args.result
     }
 }

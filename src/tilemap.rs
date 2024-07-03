@@ -70,6 +70,8 @@ pub struct TileMap<K: Key, T> {
     tiles: Vec<List<K, (Aabb, T)>>,
     // 场景的范围
     pub info: MapInfo,
+    // 节点的最大半径
+    pub node_max_half_size: Vector2<Real>,
 }
 
 impl<K: Key, T> TileMap<K, T> {
@@ -93,9 +95,27 @@ impl<K: Key, T> TileMap<K, T> {
             ab_map: Default::default(),
             tiles,
             info,
+            node_max_half_size: Vector2::zeros(),
         }
     }
-
+    /// 获得节点最大半径
+    pub fn get_node_max_half_size(&self) -> &Vector2<Real> {
+        &self.node_max_half_size
+    }
+    /// 设置节点最大半径
+    pub fn set_node_max_half_size(&mut self, half_size: Vector2<Real>) {
+        self.node_max_half_size = half_size;
+    }
+    /// 更新节点最大半径
+    fn update_node_max_half_size(&mut self, aabb: Aabb) {
+        let size = aabb.half_extents();
+        if size.x > self.node_max_half_size.x {
+            self.node_max_half_size.x = size.x;
+        }
+        if size.y > self.node_max_half_size.y {
+            self.node_max_half_size.y = size.y;
+        }
+    }
     /// 获得指定位置的瓦片，超出地图边界则返回最近的边界瓦片
     pub fn get_tile_index(&self, loc: Point2<Real>) -> usize {
         let (x, y) = self.info.calc_tile_index(loc);
@@ -115,9 +135,13 @@ impl<K: Key, T> TileMap<K, T> {
     /// 获得指定范围的tile数量和迭代器
     pub fn query_iter(&self, aabb: &Aabb) -> (usize, QueryIter) {
         // 获得min所在瓦片
-        let (x_start, y_start) = self.info.calc_tile_index(aabb.mins);
+        let (x_start, y_start) = self
+            .info
+            .calc_tile_index(aabb.mins - self.node_max_half_size);
         // 获得max所在瓦片
-        let (x_end, y_end) = self.info.calc_tile_index(aabb.maxs);
+        let (x_end, y_end) = self
+            .info
+            .calc_tile_index(aabb.maxs + self.node_max_half_size);
         (
             (x_end - x_start + 1) * (y_end - y_start + 1),
             QueryIter {
@@ -130,19 +154,36 @@ impl<K: Key, T> TileMap<K, T> {
             },
         )
     }
+    /// 查询空间内及相交的ab节点
+    pub fn query<A>(
+        &self,
+        aabb: &Aabb,
+        arg: &mut A,
+        ab_func: fn(arg: &mut A, id: K, aabb: &Aabb, bind: &T),
+    ) {
+        let (_, tile_it) = self.query_iter(aabb);
+        for tile_index in tile_it {
+            let (_, it) = self.get_tile_iter(tile_index);
+            for (id, node) in it {
+                ab_func(arg, id, &node.0, &node.1);
+            }
+        }
+    }
+
     /// 指定id，在地图中添加一个aabb单元及其绑定
     pub fn add(&mut self, id: K, aabb: Aabb, bind: T) -> bool {
         let center = aabb.center();
         // 获得所在瓦片
         let tile_index = self.get_tile_index(center);
-        // 不在网格范围内
-        if tile_index.is_null() {
-            return false;
-        }
+        // // 不在网格范围内
+        // if tile_index.is_null() {
+        //     return false;
+        // }
         match self.ab_map.insert(id, Node::new((aabb, bind))) {
             Some(_) => return false,
             None => (),
         }
+        self.update_node_max_half_size(aabb);
         self.tiles[tile_index].link_before(id, K::null(), &mut self.ab_map);
         true
     }
@@ -173,8 +214,7 @@ impl<K: Key, T> TileMap<K, T> {
 
     /// 获取指定id的可写绑定
     pub unsafe fn get_unchecked_mut(&mut self, id: K) -> &mut T {
-        let node = self.ab_map.get_unchecked_mut(id);
-        &mut node.1
+        &mut self.ab_map.get_unchecked_mut(id).1
     }
 
     /// 检查是否包含某个key
@@ -193,11 +233,12 @@ impl<K: Key, T> TileMap<K, T> {
         // 获得原来所在瓦片的位置
         let (x, y) = self.info.calc_tile_index(node.0.center());
         node.0 = aabb;
-        self.move_to(id, x, y, new_x, new_y);
+        self.move_from_to(id, x, y, new_x, new_y);
+        self.update_node_max_half_size(aabb);
         true
     }
 
-    /// 移动指定id的aabb
+    /// 移动指定id的相对位置
     pub fn shift(&mut self, id: K, distance: Vector2<Real>) -> bool {
         let node = match self.ab_map.get_mut(id) {
             Some(n) => n,
@@ -210,10 +251,26 @@ impl<K: Key, T> TileMap<K, T> {
         // 获得原来所在瓦片
         let (x, y) = self.info.calc_tile_index(node.0.center());
         node.0 = aabb;
-        self.move_to(id, x, y, new_x, new_y);
+        self.move_from_to(id, x, y, new_x, new_y);
         true
     }
-    fn move_to(&mut self, id: K, x: usize, y: usize, new_x: usize, new_y: usize) {
+    /// 移动指定id的绝对位置
+    pub fn move_to(&mut self, id: K, loc: Point2<Real>) -> bool {
+        let node = match self.ab_map.get_mut(id) {
+            Some(n) => n,
+            _ => return false,
+        };
+        // 获得新的所在瓦片
+        let (new_x, new_y) = self.info.calc_tile_index(loc);
+        let center = node.0.center();
+        // 获得原来所在瓦片
+        let (x, y) = self.info.calc_tile_index(center);
+        let d = loc - center;
+        node.0 = Aabb::new(node.0.mins + d, node.0.maxs + d);
+        self.move_from_to(id, x, y, new_x, new_y);
+        true
+    }
+    fn move_from_to(&mut self, id: K, x: usize, y: usize, new_x: usize, new_y: usize) {
         if x == new_x && y == new_y {
             return;
         }

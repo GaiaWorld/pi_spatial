@@ -122,11 +122,7 @@ impl QuadTree {
         self.0
             .query(&AABB::new(min, max), intersects, &mut args, ab_query_func);
 
-        let mut r = vec![];
-        for i in args.result {
-            r.push(i);
-        }
-        r
+        args.result
     }
 
     pub fn query_max(
