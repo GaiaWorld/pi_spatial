@@ -1,6 +1,6 @@
 [package]
 name = "pi_spatial"
-version = "0.5.9"
+version = "0.6.0"
 authors = ["yineng <dev@dev.com>"]
 edition = "2021"
 description = "sparial octtree quadtree"
@@ -16,7 +16,7 @@ parry2d = "0.13"
 parry3d = "0.13"
 nalgebra = "0.32"
 num-traits = "0.2"
-pi_slotmap="0.1"
+pi_slotmap="0.2"
 pi_null = "0.1"
 pi_link_list = "0.1"
 
